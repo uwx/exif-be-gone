@@ -77,7 +77,7 @@ test_file() {
 
 	local ext_lower=$(echo "$ext" | tr '[:upper:]' '[:lower:]')
 	case "$ext_lower" in
-		tif|tiff|heic|heif|avif)
+		tif|tiff|heic|heif|avif|jxl)
 			# EXIF sub-IFD tags should be stripped
 			if echo "$post_exif_out" | grep -qi '^Exif Version'; then
 				echo "After scrubbing $f, still found 'Exif Version'"
@@ -166,6 +166,9 @@ clone_or_update imagemeta-fixtures https://github.com/bep/imagemeta.git
 # py-pdf sample-files: 32 PDFs with various metadata (author, title, XMP, etc.)
 clone_or_update pypdf-samples https://github.com/py-pdf/sample-files.git
 
+# exiftool test images: JXL (2), HEIC (1), TIFF (2), WebP (1), PDF (2), JPEG (many), PNG (1)
+clone_or_update exiftool-fixtures https://github.com/exiftool/exiftool.git
+
 # Only test supported image/PDF formats (allowlist approach)
 find \
 	samples \
@@ -174,6 +177,7 @@ find \
 	exifr-fixtures/test/fixtures \
 	imagemeta-fixtures/testdata/images \
 	pypdf-samples \
+	exiftool-fixtures/t/images \
 	-type f \
 	-not -path '*/\.git/*' \
 	-not -path '*/corrupt/*' \
@@ -187,6 +191,7 @@ find \
 		-iname '*.heic' -o \
 		-iname '*.heif' -o \
 		-iname '*.avif' -o \
+		-iname '*.jxl' -o \
 		-iname '*.pdf' \
 	\) \
 	| while read f

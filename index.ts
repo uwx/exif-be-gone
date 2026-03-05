@@ -456,13 +456,26 @@ class ExifTransformer extends Transform {
     buf.fill(0, offset, Math.min(entriesEnd, buf.length))
   }
 
-  // ISOBMFF scrubbing (HEIC/AVIF)
+  // ISOBMFF scrubbing (HEIC/AVIF/JXL)
   _scrubISOBMFF (buf: Buffer): Buffer {
     if (buf.length < 12) return buf
     const out = Buffer.from(buf)
 
-    // Find meta box - could be top-level or inside moov
     const topBoxes = this._isobmffParseBoxes(out, 0, out.length)
+
+    // JXL-style: zero top-level Exif, xml, and brob (Brotli-compressed Exif/xml) boxes
+    for (const box of topBoxes) {
+      if (box.type === 'Exif' || box.type === 'xml ') {
+        out.fill(0, box.dataOffset, box.offset + box.size)
+      } else if (box.type === 'brob' && box.dataOffset + 4 <= box.offset + box.size) {
+        const actualType = out.slice(box.dataOffset, box.dataOffset + 4).toString('utf-8')
+        if (actualType === 'Exif' || actualType === 'xml ') {
+          out.fill(0, box.dataOffset, box.offset + box.size)
+        }
+      }
+    }
+
+    // HEIC/AVIF-style: find meta box and zero item extents
     let metaBox: { type: string, offset: number, size: number, dataOffset: number } | null = null
 
     for (const box of topBoxes) {

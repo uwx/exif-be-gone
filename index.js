@@ -449,16 +449,29 @@ var ExifTransformer = /** @class */ (function (_super) {
         // Zero the IFD itself
         buf.fill(0, offset, Math.min(entriesEnd, buf.length));
     };
-    // ISOBMFF scrubbing (HEIC/AVIF)
+    // ISOBMFF scrubbing (HEIC/AVIF/JXL)
     ExifTransformer.prototype._scrubISOBMFF = function (buf) {
         if (buf.length < 12)
             return buf;
         var out = Buffer.from(buf);
-        // Find meta box - could be top-level or inside moov
         var topBoxes = this._isobmffParseBoxes(out, 0, out.length);
-        var metaBox = null;
+        // JXL-style: zero top-level Exif, xml, and brob (Brotli-compressed Exif/xml) boxes
         for (var _i = 0, topBoxes_1 = topBoxes; _i < topBoxes_1.length; _i++) {
             var box = topBoxes_1[_i];
+            if (box.type === 'Exif' || box.type === 'xml ') {
+                out.fill(0, box.dataOffset, box.offset + box.size);
+            }
+            else if (box.type === 'brob' && box.dataOffset + 4 <= box.offset + box.size) {
+                var actualType = out.slice(box.dataOffset, box.dataOffset + 4).toString('utf-8');
+                if (actualType === 'Exif' || actualType === 'xml ') {
+                    out.fill(0, box.dataOffset, box.offset + box.size);
+                }
+            }
+        }
+        // HEIC/AVIF-style: find meta box and zero item extents
+        var metaBox = null;
+        for (var _a = 0, topBoxes_2 = topBoxes; _a < topBoxes_2.length; _a++) {
+            var box = topBoxes_2[_a];
             if (box.type === 'meta') {
                 metaBox = box;
                 break;
@@ -466,8 +479,8 @@ var ExifTransformer = /** @class */ (function (_super) {
             if (box.type === 'moov') {
                 var moovEnd = box.offset + box.size;
                 var moovChildren = this._isobmffParseBoxes(out, box.dataOffset, moovEnd);
-                for (var _a = 0, moovChildren_1 = moovChildren; _a < moovChildren_1.length; _a++) {
-                    var child = moovChildren_1[_a];
+                for (var _b = 0, moovChildren_1 = moovChildren; _b < moovChildren_1.length; _b++) {
+                    var child = moovChildren_1[_b];
                     if (child.type === 'meta') {
                         metaBox = child;
                         break;
@@ -487,8 +500,8 @@ var ExifTransformer = /** @class */ (function (_super) {
         var metaChildren = this._isobmffParseBoxes(out, metaDataStart, metaEnd);
         var iinfBox = null;
         var ilocBox = null;
-        for (var _b = 0, metaChildren_1 = metaChildren; _b < metaChildren_1.length; _b++) {
-            var child = metaChildren_1[_b];
+        for (var _c = 0, metaChildren_1 = metaChildren; _c < metaChildren_1.length; _c++) {
+            var child = metaChildren_1[_c];
             if (child.type === 'iinf')
                 iinfBox = child;
             if (child.type === 'iloc')
@@ -500,18 +513,18 @@ var ExifTransformer = /** @class */ (function (_super) {
         var locations = this._isobmffParseIloc(out, ilocBox.dataOffset, ilocBox.offset + ilocBox.size);
         // Identify metadata item IDs
         var metadataItemIds = new Set();
-        for (var _c = 0, items_1 = items; _c < items_1.length; _c++) {
-            var item = items_1[_c];
+        for (var _d = 0, items_1 = items; _d < items_1.length; _d++) {
+            var item = items_1[_d];
             if (item.itemType === 'Exif' || item.itemType === 'mime') {
                 metadataItemIds.add(item.itemId);
             }
         }
         // Zero out metadata item extents
-        for (var _d = 0, locations_1 = locations; _d < locations_1.length; _d++) {
-            var loc = locations_1[_d];
+        for (var _f = 0, locations_1 = locations; _f < locations_1.length; _f++) {
+            var loc = locations_1[_f];
             if (metadataItemIds.has(loc.itemId)) {
-                for (var _f = 0, _g = loc.extents; _f < _g.length; _f++) {
-                    var ext = _g[_f];
+                for (var _g = 0, _h = loc.extents; _g < _h.length; _g++) {
+                    var ext = _h[_g];
                     if (ext.offset + ext.length <= out.length) {
                         out.fill(0, ext.offset, ext.offset + ext.length);
                     }
