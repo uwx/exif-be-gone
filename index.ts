@@ -13,13 +13,32 @@ const flirMarker = Buffer.from('FLIR', 'utf-8')
 
 const maxMarkerLength = Math.max(exifMarker.length, xmpMarker.length, flirMarker.length)
 
+// TIFF
+const tiffLE = Buffer.from('49492a00', 'hex') // II*\0
+const tiffBE = Buffer.from('4d4d002a', 'hex') // MM\0*
+
+// ISOBMFF brands (HEIC + AVIF)
+const ftypMarker = Buffer.from('ftyp', 'utf-8')
+const isobmffBrands = ['heic', 'heix', 'mif1', 'msf1', 'hevx', 'hevc', 'avif', 'avis']
+
+// TIFF metadata tags to strip
+const tiffStripTags = new Set([
+  0x010E, 0x013B, 0x02BC, 0x8298, 0x83BB,
+  0x8568, 0x8649, 0x8769, 0x8825, 0xA005,
+  0x9C9B, 0x9C9C, 0x9C9D, 0x9C9E, 0x9C9F
+])
+const tiffPointerTags = new Set([0x8769, 0x8825, 0xA005])
+const tiffTypeSizes: Record<number, number> = {
+  1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8
+}
+
 type PdfStreamType = 'metadata' | 'image' | 'embedded' | 'xref' | 'pass'
 
 class ExifTransformer extends Transform {
   remainingScrubBytes: number | undefined
   remainingGoodBytes: number | undefined
   pending: Array<Buffer>
-  mode: 'png' | 'webp' | 'pdf' | 'other' | undefined
+  mode: 'png' | 'webp' | 'pdf' | 'tiff' | 'isobmff' | 'other' | undefined
 
   // PDF state
   pdfState: 'scanning' | 'in_dict' | 'in_stream'
@@ -73,12 +92,26 @@ class ExifTransformer extends Transform {
         chunk = Buffer.from(Uint8Array.prototype.slice.call(chunk, 12))
       } else if (chunk.length >= 5 && pdfMarker.equals(Uint8Array.prototype.slice.call(chunk, 0, 5))) {
         this.mode = 'pdf'
+      } else if (chunk.length >= 4 && (tiffLE.equals(Uint8Array.prototype.slice.call(chunk, 0, 4)) || tiffBE.equals(Uint8Array.prototype.slice.call(chunk, 0, 4)))) {
+        this.mode = 'tiff'
+      } else if (chunk.length >= 12 && ftypMarker.equals(Uint8Array.prototype.slice.call(chunk, 4, 8))) {
+        const brand = Uint8Array.prototype.slice.call(chunk, 8, 12).toString()
+        if (isobmffBrands.includes(brand)) {
+          this.mode = 'isobmff'
+        } else {
+          this.mode = 'other'
+        }
       } else {
         this.mode = 'other'
       }
     }
     if (this.mode === 'pdf') {
       this._scrubPDF(false, chunk)
+      callback()
+      return
+    }
+    if (this.mode === 'tiff' || this.mode === 'isobmff') {
+      this.pending.push(chunk)
       callback()
       return
     }
@@ -91,6 +124,18 @@ class ExifTransformer extends Transform {
       if (this.pdfPending.length > 0) {
         this._scrubPDF(true)
       }
+      callback()
+      return
+    }
+    if (this.mode === 'tiff') {
+      this.push(this._scrubTIFF(Buffer.concat(this.pending)))
+      this.pending.length = 0
+      callback()
+      return
+    }
+    if (this.mode === 'isobmff') {
+      this.push(this._scrubISOBMFF(Buffer.concat(this.pending)))
+      this.pending.length = 0
       callback()
       return
     }
@@ -261,16 +306,389 @@ class ExifTransformer extends Transform {
 
       const chunkType = Uint8Array.prototype.slice.call(pendingChunk, 0, 4).toString()
       const size = pendingChunk.readUInt32LE(4)
+      const chunkTotal = 8 + size + (size % 2) // header + data + RIFF padding
       switch (chunkType) {
         case 'EXIF':
-          this.remainingScrubBytes = size + 12
+        case 'XMP ':
+          this.remainingScrubBytes = chunkTotal
           continue
         default:
-          this.remainingGoodBytes = size + 12
+          this.remainingGoodBytes = chunkTotal
           continue
       }
     }
   }
+  // TIFF scrubbing
+  _scrubTIFF (buf: Buffer): Buffer {
+    if (buf.length < 8) return buf
+    const out = Buffer.from(buf)
+    const le = out[0] === 0x49 // 'I' = little-endian
+    const readU16 = le ? (b: Buffer, o: number) => b.readUInt16LE(o) : (b: Buffer, o: number) => b.readUInt16BE(o)
+    const readU32 = le ? (b: Buffer, o: number) => b.readUInt32LE(o) : (b: Buffer, o: number) => b.readUInt32BE(o)
+    const writeU16 = le ? (b: Buffer, v: number, o: number) => b.writeUInt16LE(v, o) : (b: Buffer, v: number, o: number) => b.writeUInt16BE(v, o)
+
+    let ifdOffset = readU32(out, 4)
+    const visited = new Set<number>()
+
+    while (ifdOffset !== 0 && ifdOffset + 2 <= out.length) {
+      if (visited.has(ifdOffset)) break
+      visited.add(ifdOffset)
+
+      const entryCount = readU16(out, ifdOffset)
+      const entriesStart = ifdOffset + 2
+      const entriesEnd = entriesStart + entryCount * 12
+
+      if (entriesEnd > out.length) break
+
+      const kept: Buffer[] = []
+      for (let i = 0; i < entryCount; i++) {
+        const entryOff = entriesStart + i * 12
+        if (entryOff + 12 > out.length) break
+        const tag = readU16(out, entryOff)
+
+        if (tiffStripTags.has(tag)) {
+          const type = readU16(out, entryOff + 2)
+          const count = readU32(out, entryOff + 4)
+          const typeSize = tiffTypeSizes[type] || 1
+          const totalSize = count * typeSize
+
+          if (tiffPointerTags.has(tag)) {
+            // Zero sub-IFD recursively
+            if (totalSize <= 4) {
+              const subOffset = le ? out.readUInt32LE(entryOff + 8) : out.readUInt32BE(entryOff + 8)
+              this._tiffZeroSubIFD(out, subOffset, readU16, readU32, visited)
+            } else {
+              const ptrOffset = readU32(out, entryOff + 8)
+              if (ptrOffset + 4 <= out.length) {
+                const subOffset = readU32(out, ptrOffset)
+                this._tiffZeroSubIFD(out, subOffset, readU16, readU32, visited)
+              }
+            }
+          }
+
+          // Zero the entry's data
+          if (totalSize > 4) {
+            const dataOffset = readU32(out, entryOff + 8)
+            if (dataOffset + totalSize <= out.length) {
+              out.fill(0, dataOffset, dataOffset + totalSize)
+            }
+          }
+          // Zero inline value
+          out.fill(0, entryOff + 8, entryOff + 12)
+        } else {
+          kept.push(Buffer.from(out.slice(entryOff, entryOff + 12)))
+        }
+      }
+
+      // Rewrite IFD with only kept entries
+      writeU16(out, kept.length, ifdOffset)
+      for (let i = 0; i < kept.length; i++) {
+        kept[i].copy(out, entriesStart + i * 12)
+      }
+      // Zero vacated space
+      const newEntriesEnd = entriesStart + kept.length * 12
+      if (newEntriesEnd < entriesEnd) {
+        out.fill(0, newEntriesEnd, entriesEnd)
+      }
+
+      // Read next-IFD pointer and copy to correct position
+      let origNextIFD = 0
+      if (entriesEnd + 4 <= out.length) {
+        origNextIFD = readU32(out, entriesEnd)
+      }
+      if (newEntriesEnd + 4 <= out.length) {
+        if (le) out.writeUInt32LE(origNextIFD, newEntriesEnd)
+        else out.writeUInt32BE(origNextIFD, newEntriesEnd)
+      }
+
+      ifdOffset = origNextIFD
+    }
+
+    return out
+  }
+
+  _tiffZeroSubIFD (
+    buf: Buffer, offset: number,
+    readU16: (b: Buffer, o: number) => number,
+    readU32: (b: Buffer, o: number) => number,
+    visited: Set<number>
+  ): void {
+    if (offset === 0 || offset + 2 > buf.length) return
+    if (visited.has(offset)) return
+    visited.add(offset)
+
+    const entryCount = readU16(buf, offset)
+    const entriesStart = offset + 2
+    const entriesEnd = entriesStart + entryCount * 12
+
+    if (entriesEnd > buf.length) return
+
+    for (let i = 0; i < entryCount; i++) {
+      const entryOff = entriesStart + i * 12
+      if (entryOff + 12 > buf.length) break
+      const tag = readU16(buf, entryOff)
+      const type = readU16(buf, entryOff + 2)
+      const count = readU32(buf, entryOff + 4)
+      const typeSize = tiffTypeSizes[type] || 1
+      const totalSize = count * typeSize
+
+      // Recursively zero sub-IFDs pointed to by pointer tags
+      if (tiffPointerTags.has(tag) && totalSize <= 4) {
+        const subOffset = readU32(buf, entryOff + 8)
+        this._tiffZeroSubIFD(buf, subOffset, readU16, readU32, visited)
+      }
+
+      // Zero remote data
+      if (totalSize > 4) {
+        const dataOffset = readU32(buf, entryOff + 8)
+        if (dataOffset + totalSize <= buf.length) {
+          buf.fill(0, dataOffset, dataOffset + totalSize)
+        }
+      }
+    }
+
+    // Zero the IFD itself
+    buf.fill(0, offset, Math.min(entriesEnd, buf.length))
+  }
+
+  // ISOBMFF scrubbing (HEIC/AVIF)
+  _scrubISOBMFF (buf: Buffer): Buffer {
+    if (buf.length < 12) return buf
+    const out = Buffer.from(buf)
+
+    // Find meta box - could be top-level or inside moov
+    const topBoxes = this._isobmffParseBoxes(out, 0, out.length)
+    let metaBox: { type: string, offset: number, size: number, dataOffset: number } | null = null
+
+    for (const box of topBoxes) {
+      if (box.type === 'meta') {
+        metaBox = box
+        break
+      }
+      if (box.type === 'moov') {
+        const moovEnd = box.offset + box.size
+        const moovChildren = this._isobmffParseBoxes(out, box.dataOffset, moovEnd)
+        for (const child of moovChildren) {
+          if (child.type === 'meta') {
+            metaBox = child
+            break
+          }
+        }
+        if (metaBox) break
+      }
+    }
+
+    if (!metaBox) return out
+
+    // meta is a FullBox: skip 4 bytes (version + flags) after the box header
+    const metaDataStart = metaBox.dataOffset + 4
+    const metaEnd = metaBox.offset + metaBox.size
+
+    if (metaDataStart >= metaEnd) return out
+
+    const metaChildren = this._isobmffParseBoxes(out, metaDataStart, metaEnd)
+
+    let iinfBox: { type: string, offset: number, size: number, dataOffset: number } | null = null
+    let ilocBox: { type: string, offset: number, size: number, dataOffset: number } | null = null
+
+    for (const child of metaChildren) {
+      if (child.type === 'iinf') iinfBox = child
+      if (child.type === 'iloc') ilocBox = child
+    }
+
+    if (!iinfBox || !ilocBox) return out
+
+    const items = this._isobmffParseIinf(out, iinfBox.dataOffset, iinfBox.offset + iinfBox.size)
+    const locations = this._isobmffParseIloc(out, ilocBox.dataOffset, ilocBox.offset + ilocBox.size)
+
+    // Identify metadata item IDs
+    const metadataItemIds = new Set<number>()
+    for (const item of items) {
+      if (item.itemType === 'Exif' || item.itemType === 'mime') {
+        metadataItemIds.add(item.itemId)
+      }
+    }
+
+    // Zero out metadata item extents
+    for (const loc of locations) {
+      if (metadataItemIds.has(loc.itemId)) {
+        for (const ext of loc.extents) {
+          if (ext.offset + ext.length <= out.length) {
+            out.fill(0, ext.offset, ext.offset + ext.length)
+          }
+        }
+      }
+    }
+
+    return out
+  }
+
+  _isobmffParseBoxes (buf: Buffer, start: number, end: number): Array<{ type: string, offset: number, size: number, dataOffset: number }> {
+    const boxes: Array<{ type: string, offset: number, size: number, dataOffset: number }> = []
+    let pos = start
+
+    while (pos + 8 <= end) {
+      let size = buf.readUInt32BE(pos)
+      const type = buf.slice(pos + 4, pos + 8).toString('utf-8')
+      let dataOffset = pos + 8
+
+      if (size === 1) {
+        // 64-bit extended size
+        if (pos + 16 > end) break
+        const hi = buf.readUInt32BE(pos + 8)
+        const lo = buf.readUInt32BE(pos + 12)
+        size = hi * 0x100000000 + lo
+        dataOffset = pos + 16
+      } else if (size === 0) {
+        // Box extends to end of file
+        size = end - pos
+      }
+
+      if (size < 8 || pos + size > end) break
+
+      boxes.push({ type, offset: pos, size, dataOffset })
+      pos += size
+    }
+
+    return boxes
+  }
+
+  _isobmffReadUintBE (buf: Buffer, offset: number, byteCount: number): number {
+    let val = 0
+    for (let i = 0; i < byteCount; i++) {
+      val = val * 256 + buf[offset + i]
+    }
+    return val
+  }
+
+  _isobmffParseIinf (buf: Buffer, dataOffset: number, boxEnd: number): Array<{ itemId: number, itemType: string }> {
+    const items: Array<{ itemId: number, itemType: string }> = []
+    if (dataOffset + 4 > boxEnd) return items
+
+    // iinf is a FullBox: version(1) + flags(3)
+    const version = buf[dataOffset]
+    let pos = dataOffset + 4
+
+    // entry count
+    let entryCount: number
+    if (version === 0) {
+      if (pos + 2 > boxEnd) return items
+      entryCount = buf.readUInt16BE(pos)
+      pos += 2
+    } else {
+      if (pos + 4 > boxEnd) return items
+      entryCount = buf.readUInt32BE(pos)
+      pos += 4
+    }
+
+    // Parse infe boxes
+    for (let i = 0; i < entryCount && pos + 8 < boxEnd; i++) {
+      const infeBoxes = this._isobmffParseBoxes(buf, pos, boxEnd)
+      if (infeBoxes.length === 0) break
+      const infe = infeBoxes[0]
+      if (infe.type !== 'infe') { pos += infe.size; continue }
+
+      // infe is a FullBox: version(1) + flags(3)
+      const infeVersion = buf[infe.dataOffset]
+      let infePos = infe.dataOffset + 4
+
+      if (infeVersion >= 2) {
+        let itemId: number
+        if (infeVersion === 2) {
+          if (infePos + 2 > boxEnd) break
+          itemId = buf.readUInt16BE(infePos)
+          infePos += 2
+        } else {
+          if (infePos + 4 > boxEnd) break
+          itemId = buf.readUInt32BE(infePos)
+          infePos += 4
+        }
+        infePos += 2 // item_protection_index
+        if (infePos + 4 <= boxEnd) {
+          const itemType = buf.slice(infePos, infePos + 4).toString('utf-8')
+          items.push({ itemId, itemType })
+        }
+      }
+
+      pos = infe.offset + infe.size
+    }
+
+    return items
+  }
+
+  _isobmffParseIloc (buf: Buffer, dataOffset: number, boxEnd: number): Array<{ itemId: number, extents: Array<{ offset: number, length: number }> }> {
+    const items: Array<{ itemId: number, extents: Array<{ offset: number, length: number }> }> = []
+    if (dataOffset + 4 > boxEnd) return items
+
+    // iloc is a FullBox: version(1) + flags(3)
+    const version = buf[dataOffset]
+    let pos = dataOffset + 4
+
+    if (pos + 2 > boxEnd) return items
+    const sizeByte1 = buf[pos]
+    const sizeByte2 = buf[pos + 1]
+    const offsetSize = (sizeByte1 >> 4) & 0xF
+    const lengthSize = sizeByte1 & 0xF
+    const baseOffsetSize = (sizeByte2 >> 4) & 0xF
+    const indexSize = (version >= 1) ? (sizeByte2 & 0xF) : 0
+    pos += 2
+
+    let itemCount: number
+    if (version < 2) {
+      if (pos + 2 > boxEnd) return items
+      itemCount = buf.readUInt16BE(pos)
+      pos += 2
+    } else {
+      if (pos + 4 > boxEnd) return items
+      itemCount = buf.readUInt32BE(pos)
+      pos += 4
+    }
+
+    for (let i = 0; i < itemCount && pos < boxEnd; i++) {
+      let itemId: number
+      if (version < 2) {
+        if (pos + 2 > boxEnd) break
+        itemId = buf.readUInt16BE(pos)
+        pos += 2
+      } else {
+        if (pos + 4 > boxEnd) break
+        itemId = buf.readUInt32BE(pos)
+        pos += 4
+      }
+
+      if (version >= 1) {
+        if (pos + 2 > boxEnd) break
+        pos += 2 // construction_method
+      }
+
+      if (pos + 2 > boxEnd) break
+      pos += 2 // data_reference_index
+
+      const baseOffset = baseOffsetSize > 0 ? this._isobmffReadUintBE(buf, pos, baseOffsetSize) : 0
+      pos += baseOffsetSize
+
+      if (pos + 2 > boxEnd) break
+      const extentCount = buf.readUInt16BE(pos)
+      pos += 2
+
+      const extents: Array<{ offset: number, length: number }> = []
+      for (let j = 0; j < extentCount && pos < boxEnd; j++) {
+        if (version >= 1 && indexSize > 0) {
+          pos += indexSize // extent_index
+        }
+        const extOffset = offsetSize > 0 ? this._isobmffReadUintBE(buf, pos, offsetSize) : 0
+        pos += offsetSize
+        const extLength = lengthSize > 0 ? this._isobmffReadUintBE(buf, pos, lengthSize) : 0
+        pos += lengthSize
+        extents.push({ offset: baseOffset + extOffset, length: extLength })
+      }
+
+      items.push({ itemId, extents })
+    }
+
+    return items
+  }
+
   // PDF offset tracking helpers
   _pdfPush (data: Buffer): void {
     this.push(data)
@@ -574,10 +992,10 @@ class ExifTransformer extends Transform {
     // Scrub info dictionary keys
     const scrubbedDictText = this._pdfScrubInfoDict(dictText)
 
-    // Check if stream keyword follows
+    // Check if stream keyword follows (must be within ~20 bytes of >>)
     const remaining = buf.slice(pos)
-    const combined = Buffer.concat([remaining])
-    const streamMatch = this._pdfFindStreamKeyword(combined)
+    const searchWindow = remaining.slice(0, 20)
+    const streamMatch = this._pdfFindStreamKeyword(searchWindow)
 
     if (streamMatch === -1) {
       // No stream keyword - this is just a dictionary object
@@ -589,8 +1007,8 @@ class ExifTransformer extends Transform {
     }
 
     // There's a stream keyword
-    const beforeStream = combined.slice(0, streamMatch)
-    const afterKeyword = this._pdfStreamKeywordEnd(combined, streamMatch)
+    const beforeStream = remaining.slice(0, streamMatch)
+    const afterKeyword = this._pdfStreamKeywordEnd(remaining, streamMatch)
     if (afterKeyword === -1) {
       // Need more data for the stream keyword + newline
       const scrubbedDict = Buffer.from(scrubbedDictText, 'binary')
@@ -601,12 +1019,12 @@ class ExifTransformer extends Transform {
       this.pdfStreamLength = streamLength
       this.pdfStreamBytesRead = 0
       this.pdfStreamData = []
-      this.pdfPending = combined.slice(streamMatch)
+      this.pdfPending = remaining.slice(streamMatch)
       return
     }
 
     // We have the full stream header
-    const streamHeader = combined.slice(0, afterKeyword)
+    const streamHeader = remaining.slice(0, afterKeyword)
 
     if (streamType === 'pass') {
       // Push dict + stream header as-is (but with scrubbed info keys)
@@ -618,7 +1036,7 @@ class ExifTransformer extends Transform {
       this.pdfStreamLength = streamLength
       this.pdfStreamBytesRead = 0
       this.pdfStreamData = []
-      this.pdfPending = combined.slice(afterKeyword)
+      this.pdfPending = remaining.slice(afterKeyword)
       return
     }
 
@@ -633,7 +1051,7 @@ class ExifTransformer extends Transform {
     this._pdfStoredDictOrigLen = dictLen
     this._pdfStoredStreamHeader = streamHeader
     this._pdfStoredStreamHeaderInputLen = streamHeader.length
-    this.pdfPending = combined.slice(afterKeyword)
+    this.pdfPending = remaining.slice(afterKeyword)
   }
 
   _pdfStoredDictText: string = ''

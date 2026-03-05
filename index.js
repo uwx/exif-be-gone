@@ -36,6 +36,22 @@ var webp2Marker = Buffer.from('57454250', 'hex'); // WEBP
 var xmpMarker = Buffer.from('http://ns.adobe.com/xap', 'utf-8');
 var flirMarker = Buffer.from('FLIR', 'utf-8');
 var maxMarkerLength = Math.max(exifMarker.length, xmpMarker.length, flirMarker.length);
+// TIFF
+var tiffLE = Buffer.from('49492a00', 'hex'); // II*\0
+var tiffBE = Buffer.from('4d4d002a', 'hex'); // MM\0*
+// ISOBMFF brands (HEIC + AVIF)
+var ftypMarker = Buffer.from('ftyp', 'utf-8');
+var isobmffBrands = ['heic', 'heix', 'mif1', 'msf1', 'hevx', 'hevc', 'avif', 'avis'];
+// TIFF metadata tags to strip
+var tiffStripTags = new Set([
+    0x010E, 0x013B, 0x02BC, 0x8298, 0x83BB,
+    0x8568, 0x8649, 0x8769, 0x8825, 0xA005,
+    0x9C9B, 0x9C9C, 0x9C9D, 0x9C9E, 0x9C9F
+]);
+var tiffPointerTags = new Set([0x8769, 0x8825, 0xA005]);
+var tiffTypeSizes = {
+    1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8
+};
 var ExifTransformer = /** @class */ (function (_super) {
     __extends(ExifTransformer, _super);
     function ExifTransformer(options) {
@@ -79,12 +95,29 @@ var ExifTransformer = /** @class */ (function (_super) {
             else if (chunk.length >= 5 && pdfMarker.equals(Uint8Array.prototype.slice.call(chunk, 0, 5))) {
                 this.mode = 'pdf';
             }
+            else if (chunk.length >= 4 && (tiffLE.equals(Uint8Array.prototype.slice.call(chunk, 0, 4)) || tiffBE.equals(Uint8Array.prototype.slice.call(chunk, 0, 4)))) {
+                this.mode = 'tiff';
+            }
+            else if (chunk.length >= 12 && ftypMarker.equals(Uint8Array.prototype.slice.call(chunk, 4, 8))) {
+                var brand = Uint8Array.prototype.slice.call(chunk, 8, 12).toString();
+                if (isobmffBrands.includes(brand)) {
+                    this.mode = 'isobmff';
+                }
+                else {
+                    this.mode = 'other';
+                }
+            }
             else {
                 this.mode = 'other';
             }
         }
         if (this.mode === 'pdf') {
             this._scrubPDF(false, chunk);
+            callback();
+            return;
+        }
+        if (this.mode === 'tiff' || this.mode === 'isobmff') {
+            this.pending.push(chunk);
             callback();
             return;
         }
@@ -96,6 +129,18 @@ var ExifTransformer = /** @class */ (function (_super) {
             if (this.pdfPending.length > 0) {
                 this._scrubPDF(true);
             }
+            callback();
+            return;
+        }
+        if (this.mode === 'tiff') {
+            this.push(this._scrubTIFF(Buffer.concat(this.pending)));
+            this.pending.length = 0;
+            callback();
+            return;
+        }
+        if (this.mode === 'isobmff') {
+            this.push(this._scrubISOBMFF(Buffer.concat(this.pending)));
+            this.pending.length = 0;
             callback();
             return;
         }
@@ -267,15 +312,372 @@ var ExifTransformer = /** @class */ (function (_super) {
             }
             var chunkType = Uint8Array.prototype.slice.call(pendingChunk, 0, 4).toString();
             var size = pendingChunk.readUInt32LE(4);
+            var chunkTotal = 8 + size + (size % 2); // header + data + RIFF padding
             switch (chunkType) {
                 case 'EXIF':
-                    this.remainingScrubBytes = size + 12;
+                case 'XMP ':
+                    this.remainingScrubBytes = chunkTotal;
                     continue;
                 default:
-                    this.remainingGoodBytes = size + 12;
+                    this.remainingGoodBytes = chunkTotal;
                     continue;
             }
         }
+    };
+    // TIFF scrubbing
+    ExifTransformer.prototype._scrubTIFF = function (buf) {
+        if (buf.length < 8)
+            return buf;
+        var out = Buffer.from(buf);
+        var le = out[0] === 0x49; // 'I' = little-endian
+        var readU16 = le ? function (b, o) { return b.readUInt16LE(o); } : function (b, o) { return b.readUInt16BE(o); };
+        var readU32 = le ? function (b, o) { return b.readUInt32LE(o); } : function (b, o) { return b.readUInt32BE(o); };
+        var writeU16 = le ? function (b, v, o) { return b.writeUInt16LE(v, o); } : function (b, v, o) { return b.writeUInt16BE(v, o); };
+        var ifdOffset = readU32(out, 4);
+        var visited = new Set();
+        while (ifdOffset !== 0 && ifdOffset + 2 <= out.length) {
+            if (visited.has(ifdOffset))
+                break;
+            visited.add(ifdOffset);
+            var entryCount = readU16(out, ifdOffset);
+            var entriesStart = ifdOffset + 2;
+            var entriesEnd = entriesStart + entryCount * 12;
+            if (entriesEnd > out.length)
+                break;
+            var kept = [];
+            for (var i = 0; i < entryCount; i++) {
+                var entryOff = entriesStart + i * 12;
+                if (entryOff + 12 > out.length)
+                    break;
+                var tag = readU16(out, entryOff);
+                if (tiffStripTags.has(tag)) {
+                    var type = readU16(out, entryOff + 2);
+                    var count = readU32(out, entryOff + 4);
+                    var typeSize = tiffTypeSizes[type] || 1;
+                    var totalSize = count * typeSize;
+                    if (tiffPointerTags.has(tag)) {
+                        // Zero sub-IFD recursively
+                        if (totalSize <= 4) {
+                            var subOffset = le ? out.readUInt32LE(entryOff + 8) : out.readUInt32BE(entryOff + 8);
+                            this._tiffZeroSubIFD(out, subOffset, readU16, readU32, visited);
+                        }
+                        else {
+                            var ptrOffset = readU32(out, entryOff + 8);
+                            if (ptrOffset + 4 <= out.length) {
+                                var subOffset = readU32(out, ptrOffset);
+                                this._tiffZeroSubIFD(out, subOffset, readU16, readU32, visited);
+                            }
+                        }
+                    }
+                    // Zero the entry's data
+                    if (totalSize > 4) {
+                        var dataOffset = readU32(out, entryOff + 8);
+                        if (dataOffset + totalSize <= out.length) {
+                            out.fill(0, dataOffset, dataOffset + totalSize);
+                        }
+                    }
+                    // Zero inline value
+                    out.fill(0, entryOff + 8, entryOff + 12);
+                }
+                else {
+                    kept.push(Buffer.from(out.slice(entryOff, entryOff + 12)));
+                }
+            }
+            // Rewrite IFD with only kept entries
+            writeU16(out, kept.length, ifdOffset);
+            for (var i = 0; i < kept.length; i++) {
+                kept[i].copy(out, entriesStart + i * 12);
+            }
+            // Zero vacated space
+            var newEntriesEnd = entriesStart + kept.length * 12;
+            if (newEntriesEnd < entriesEnd) {
+                out.fill(0, newEntriesEnd, entriesEnd);
+            }
+            // Read next-IFD pointer and copy to correct position
+            var origNextIFD = 0;
+            if (entriesEnd + 4 <= out.length) {
+                origNextIFD = readU32(out, entriesEnd);
+            }
+            if (newEntriesEnd + 4 <= out.length) {
+                if (le)
+                    out.writeUInt32LE(origNextIFD, newEntriesEnd);
+                else
+                    out.writeUInt32BE(origNextIFD, newEntriesEnd);
+            }
+            ifdOffset = origNextIFD;
+        }
+        return out;
+    };
+    ExifTransformer.prototype._tiffZeroSubIFD = function (buf, offset, readU16, readU32, visited) {
+        if (offset === 0 || offset + 2 > buf.length)
+            return;
+        if (visited.has(offset))
+            return;
+        visited.add(offset);
+        var entryCount = readU16(buf, offset);
+        var entriesStart = offset + 2;
+        var entriesEnd = entriesStart + entryCount * 12;
+        if (entriesEnd > buf.length)
+            return;
+        for (var i = 0; i < entryCount; i++) {
+            var entryOff = entriesStart + i * 12;
+            if (entryOff + 12 > buf.length)
+                break;
+            var tag = readU16(buf, entryOff);
+            var type = readU16(buf, entryOff + 2);
+            var count = readU32(buf, entryOff + 4);
+            var typeSize = tiffTypeSizes[type] || 1;
+            var totalSize = count * typeSize;
+            // Recursively zero sub-IFDs pointed to by pointer tags
+            if (tiffPointerTags.has(tag) && totalSize <= 4) {
+                var subOffset = readU32(buf, entryOff + 8);
+                this._tiffZeroSubIFD(buf, subOffset, readU16, readU32, visited);
+            }
+            // Zero remote data
+            if (totalSize > 4) {
+                var dataOffset = readU32(buf, entryOff + 8);
+                if (dataOffset + totalSize <= buf.length) {
+                    buf.fill(0, dataOffset, dataOffset + totalSize);
+                }
+            }
+        }
+        // Zero the IFD itself
+        buf.fill(0, offset, Math.min(entriesEnd, buf.length));
+    };
+    // ISOBMFF scrubbing (HEIC/AVIF)
+    ExifTransformer.prototype._scrubISOBMFF = function (buf) {
+        if (buf.length < 12)
+            return buf;
+        var out = Buffer.from(buf);
+        // Find meta box - could be top-level or inside moov
+        var topBoxes = this._isobmffParseBoxes(out, 0, out.length);
+        var metaBox = null;
+        for (var _i = 0, topBoxes_1 = topBoxes; _i < topBoxes_1.length; _i++) {
+            var box = topBoxes_1[_i];
+            if (box.type === 'meta') {
+                metaBox = box;
+                break;
+            }
+            if (box.type === 'moov') {
+                var moovEnd = box.offset + box.size;
+                var moovChildren = this._isobmffParseBoxes(out, box.dataOffset, moovEnd);
+                for (var _a = 0, moovChildren_1 = moovChildren; _a < moovChildren_1.length; _a++) {
+                    var child = moovChildren_1[_a];
+                    if (child.type === 'meta') {
+                        metaBox = child;
+                        break;
+                    }
+                }
+                if (metaBox)
+                    break;
+            }
+        }
+        if (!metaBox)
+            return out;
+        // meta is a FullBox: skip 4 bytes (version + flags) after the box header
+        var metaDataStart = metaBox.dataOffset + 4;
+        var metaEnd = metaBox.offset + metaBox.size;
+        if (metaDataStart >= metaEnd)
+            return out;
+        var metaChildren = this._isobmffParseBoxes(out, metaDataStart, metaEnd);
+        var iinfBox = null;
+        var ilocBox = null;
+        for (var _b = 0, metaChildren_1 = metaChildren; _b < metaChildren_1.length; _b++) {
+            var child = metaChildren_1[_b];
+            if (child.type === 'iinf')
+                iinfBox = child;
+            if (child.type === 'iloc')
+                ilocBox = child;
+        }
+        if (!iinfBox || !ilocBox)
+            return out;
+        var items = this._isobmffParseIinf(out, iinfBox.dataOffset, iinfBox.offset + iinfBox.size);
+        var locations = this._isobmffParseIloc(out, ilocBox.dataOffset, ilocBox.offset + ilocBox.size);
+        // Identify metadata item IDs
+        var metadataItemIds = new Set();
+        for (var _c = 0, items_1 = items; _c < items_1.length; _c++) {
+            var item = items_1[_c];
+            if (item.itemType === 'Exif' || item.itemType === 'mime') {
+                metadataItemIds.add(item.itemId);
+            }
+        }
+        // Zero out metadata item extents
+        for (var _d = 0, locations_1 = locations; _d < locations_1.length; _d++) {
+            var loc = locations_1[_d];
+            if (metadataItemIds.has(loc.itemId)) {
+                for (var _f = 0, _g = loc.extents; _f < _g.length; _f++) {
+                    var ext = _g[_f];
+                    if (ext.offset + ext.length <= out.length) {
+                        out.fill(0, ext.offset, ext.offset + ext.length);
+                    }
+                }
+            }
+        }
+        return out;
+    };
+    ExifTransformer.prototype._isobmffParseBoxes = function (buf, start, end) {
+        var boxes = [];
+        var pos = start;
+        while (pos + 8 <= end) {
+            var size = buf.readUInt32BE(pos);
+            var type = buf.slice(pos + 4, pos + 8).toString('utf-8');
+            var dataOffset = pos + 8;
+            if (size === 1) {
+                // 64-bit extended size
+                if (pos + 16 > end)
+                    break;
+                var hi = buf.readUInt32BE(pos + 8);
+                var lo = buf.readUInt32BE(pos + 12);
+                size = hi * 0x100000000 + lo;
+                dataOffset = pos + 16;
+            }
+            else if (size === 0) {
+                // Box extends to end of file
+                size = end - pos;
+            }
+            if (size < 8 || pos + size > end)
+                break;
+            boxes.push({ type: type, offset: pos, size: size, dataOffset: dataOffset });
+            pos += size;
+        }
+        return boxes;
+    };
+    ExifTransformer.prototype._isobmffReadUintBE = function (buf, offset, byteCount) {
+        var val = 0;
+        for (var i = 0; i < byteCount; i++) {
+            val = val * 256 + buf[offset + i];
+        }
+        return val;
+    };
+    ExifTransformer.prototype._isobmffParseIinf = function (buf, dataOffset, boxEnd) {
+        var items = [];
+        if (dataOffset + 4 > boxEnd)
+            return items;
+        // iinf is a FullBox: version(1) + flags(3)
+        var version = buf[dataOffset];
+        var pos = dataOffset + 4;
+        // entry count
+        var entryCount;
+        if (version === 0) {
+            if (pos + 2 > boxEnd)
+                return items;
+            entryCount = buf.readUInt16BE(pos);
+            pos += 2;
+        }
+        else {
+            if (pos + 4 > boxEnd)
+                return items;
+            entryCount = buf.readUInt32BE(pos);
+            pos += 4;
+        }
+        // Parse infe boxes
+        for (var i = 0; i < entryCount && pos + 8 < boxEnd; i++) {
+            var infeBoxes = this._isobmffParseBoxes(buf, pos, boxEnd);
+            if (infeBoxes.length === 0)
+                break;
+            var infe = infeBoxes[0];
+            if (infe.type !== 'infe') {
+                pos += infe.size;
+                continue;
+            }
+            // infe is a FullBox: version(1) + flags(3)
+            var infeVersion = buf[infe.dataOffset];
+            var infePos = infe.dataOffset + 4;
+            if (infeVersion >= 2) {
+                var itemId = void 0;
+                if (infeVersion === 2) {
+                    if (infePos + 2 > boxEnd)
+                        break;
+                    itemId = buf.readUInt16BE(infePos);
+                    infePos += 2;
+                }
+                else {
+                    if (infePos + 4 > boxEnd)
+                        break;
+                    itemId = buf.readUInt32BE(infePos);
+                    infePos += 4;
+                }
+                infePos += 2; // item_protection_index
+                if (infePos + 4 <= boxEnd) {
+                    var itemType = buf.slice(infePos, infePos + 4).toString('utf-8');
+                    items.push({ itemId: itemId, itemType: itemType });
+                }
+            }
+            pos = infe.offset + infe.size;
+        }
+        return items;
+    };
+    ExifTransformer.prototype._isobmffParseIloc = function (buf, dataOffset, boxEnd) {
+        var items = [];
+        if (dataOffset + 4 > boxEnd)
+            return items;
+        // iloc is a FullBox: version(1) + flags(3)
+        var version = buf[dataOffset];
+        var pos = dataOffset + 4;
+        if (pos + 2 > boxEnd)
+            return items;
+        var sizeByte1 = buf[pos];
+        var sizeByte2 = buf[pos + 1];
+        var offsetSize = (sizeByte1 >> 4) & 0xF;
+        var lengthSize = sizeByte1 & 0xF;
+        var baseOffsetSize = (sizeByte2 >> 4) & 0xF;
+        var indexSize = (version >= 1) ? (sizeByte2 & 0xF) : 0;
+        pos += 2;
+        var itemCount;
+        if (version < 2) {
+            if (pos + 2 > boxEnd)
+                return items;
+            itemCount = buf.readUInt16BE(pos);
+            pos += 2;
+        }
+        else {
+            if (pos + 4 > boxEnd)
+                return items;
+            itemCount = buf.readUInt32BE(pos);
+            pos += 4;
+        }
+        for (var i = 0; i < itemCount && pos < boxEnd; i++) {
+            var itemId = void 0;
+            if (version < 2) {
+                if (pos + 2 > boxEnd)
+                    break;
+                itemId = buf.readUInt16BE(pos);
+                pos += 2;
+            }
+            else {
+                if (pos + 4 > boxEnd)
+                    break;
+                itemId = buf.readUInt32BE(pos);
+                pos += 4;
+            }
+            if (version >= 1) {
+                if (pos + 2 > boxEnd)
+                    break;
+                pos += 2; // construction_method
+            }
+            if (pos + 2 > boxEnd)
+                break;
+            pos += 2; // data_reference_index
+            var baseOffset = baseOffsetSize > 0 ? this._isobmffReadUintBE(buf, pos, baseOffsetSize) : 0;
+            pos += baseOffsetSize;
+            if (pos + 2 > boxEnd)
+                break;
+            var extentCount = buf.readUInt16BE(pos);
+            pos += 2;
+            var extents = [];
+            for (var j = 0; j < extentCount && pos < boxEnd; j++) {
+                if (version >= 1 && indexSize > 0) {
+                    pos += indexSize; // extent_index
+                }
+                var extOffset = offsetSize > 0 ? this._isobmffReadUintBE(buf, pos, offsetSize) : 0;
+                pos += offsetSize;
+                var extLength = lengthSize > 0 ? this._isobmffReadUintBE(buf, pos, lengthSize) : 0;
+                pos += lengthSize;
+                extents.push({ offset: baseOffset + extOffset, length: extLength });
+            }
+            items.push({ itemId: itemId, extents: extents });
+        }
+        return items;
     };
     // PDF offset tracking helpers
     ExifTransformer.prototype._pdfPush = function (data) {
@@ -587,10 +989,10 @@ var ExifTransformer = /** @class */ (function (_super) {
         var streamLength = lengthMatch ? parseInt(lengthMatch[1], 10) : -1;
         // Scrub info dictionary keys
         var scrubbedDictText = this._pdfScrubInfoDict(dictText);
-        // Check if stream keyword follows
+        // Check if stream keyword follows (must be within ~20 bytes of >>)
         var remaining = buf.slice(pos);
-        var combined = Buffer.concat([remaining]);
-        var streamMatch = this._pdfFindStreamKeyword(combined);
+        var searchWindow = remaining.slice(0, 20);
+        var streamMatch = this._pdfFindStreamKeyword(searchWindow);
         if (streamMatch === -1) {
             // No stream keyword - this is just a dictionary object
             var scrubbedDict = Buffer.from(scrubbedDictText, 'binary');
@@ -600,8 +1002,8 @@ var ExifTransformer = /** @class */ (function (_super) {
             return;
         }
         // There's a stream keyword
-        var beforeStream = combined.slice(0, streamMatch);
-        var afterKeyword = this._pdfStreamKeywordEnd(combined, streamMatch);
+        var beforeStream = remaining.slice(0, streamMatch);
+        var afterKeyword = this._pdfStreamKeywordEnd(remaining, streamMatch);
         if (afterKeyword === -1) {
             // Need more data for the stream keyword + newline
             var scrubbedDict = Buffer.from(scrubbedDictText, 'binary');
@@ -612,11 +1014,11 @@ var ExifTransformer = /** @class */ (function (_super) {
             this.pdfStreamLength = streamLength;
             this.pdfStreamBytesRead = 0;
             this.pdfStreamData = [];
-            this.pdfPending = combined.slice(streamMatch);
+            this.pdfPending = remaining.slice(streamMatch);
             return;
         }
         // We have the full stream header
-        var streamHeader = combined.slice(0, afterKeyword);
+        var streamHeader = remaining.slice(0, afterKeyword);
         if (streamType === 'pass') {
             // Push dict + stream header as-is (but with scrubbed info keys)
             var scrubbedDict = Buffer.from(scrubbedDictText, 'binary');
@@ -627,7 +1029,7 @@ var ExifTransformer = /** @class */ (function (_super) {
             this.pdfStreamLength = streamLength;
             this.pdfStreamBytesRead = 0;
             this.pdfStreamData = [];
-            this.pdfPending = combined.slice(afterKeyword);
+            this.pdfPending = remaining.slice(afterKeyword);
             return;
         }
         // For modified streams, we need to buffer everything
@@ -641,7 +1043,7 @@ var ExifTransformer = /** @class */ (function (_super) {
         this._pdfStoredDictOrigLen = dictLen;
         this._pdfStoredStreamHeader = streamHeader;
         this._pdfStoredStreamHeaderInputLen = streamHeader.length;
-        this.pdfPending = combined.slice(afterKeyword);
+        this.pdfPending = remaining.slice(afterKeyword);
     };
     ExifTransformer.prototype._pdfFindStreamKeyword = function (buf) {
         // Look for 'stream' not preceded by 'end'

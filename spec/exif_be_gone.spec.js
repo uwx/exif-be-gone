@@ -36,6 +36,15 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         if (op[0] & 5) throw op[1]; return { value: op[0] ? op[1] : void 0, done: true };
     }
 };
+var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
+    if (pack || arguments.length === 2) for (var i = 0, l = from.length, ar; i < l; i++) {
+        if (ar || !(i in from)) {
+            if (!ar) ar = Array.prototype.slice.call(from, 0, i);
+            ar[i] = from[i];
+        }
+    }
+    return to.concat(ar || Array.prototype.slice.call(from));
+};
 var streamBuffers = require('stream-buffers');
 var assert = require('chai').assert;
 var fs = require('fs');
@@ -282,6 +291,610 @@ describe('Exif be gone', function () {
                             obj3offset = parseInt(entries[2].substring(0, 10), 10);
                             assert.equal(obj3offset, obj3pos, 'Xref offset for object 3 should match actual position');
                         }
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+    });
+    describe('TIFF support', function () {
+        function processBuffer(input) {
+            return new Promise(function (resolve, reject) {
+                var writer = new streamBuffers.WritableStreamBuffer();
+                var readable = stream.Readable.from([input]);
+                readable.pipe(new ExifBeGone()).pipe(writer)
+                    .on('finish', function () { return resolve(writer.getContents()); })
+                    .on('error', reject);
+            });
+        }
+        // Build a minimal TIFF with given IFD entries
+        // entries: array of {tag, type, count, value: Buffer(4)}
+        // remoteData: array of {offset: number, data: Buffer} (filled after layout)
+        function buildTIFF(le, entries, remoteBlocks, nextIFDEntries) {
+            var writeU16 = le
+                ? function (b, v, o) { return b.writeUInt16LE(v, o); }
+                : function (b, v, o) { return b.writeUInt16BE(v, o); };
+            var writeU32 = le
+                ? function (b, v, o) { return b.writeUInt32LE(v, o); }
+                : function (b, v, o) { return b.writeUInt32BE(v, o); };
+            // Layout: header(8) + IFD0(2 + entries*12 + 4) + remote data + optional IFD1
+            var ifd0Offset = 8;
+            var ifd0Size = 2 + entries.length * 12 + 4;
+            var remoteStart = ifd0Offset + ifd0Size;
+            var remoteOffsets = [];
+            if (remoteBlocks) {
+                for (var _i = 0, remoteBlocks_1 = remoteBlocks; _i < remoteBlocks_1.length; _i++) {
+                    var block = remoteBlocks_1[_i];
+                    remoteOffsets.push(remoteStart);
+                    remoteStart += block.length;
+                }
+            }
+            var ifd1Offset = 0;
+            var ifd1Size = 0;
+            if (nextIFDEntries) {
+                ifd1Offset = remoteStart;
+                ifd1Size = 2 + nextIFDEntries.length * 12 + 4;
+            }
+            var totalSize = remoteStart + ifd1Size;
+            var buf = Buffer.alloc(totalSize);
+            // Header
+            if (le) {
+                buf[0] = 0x49;
+                buf[1] = 0x49;
+                writeU16(buf, 42, 2);
+            }
+            else {
+                buf[0] = 0x4D;
+                buf[1] = 0x4D;
+                writeU16(buf, 42, 2);
+            }
+            writeU32(buf, ifd0Offset, 4);
+            // IFD0
+            writeU16(buf, entries.length, ifd0Offset);
+            for (var i = 0; i < entries.length; i++) {
+                var off = ifd0Offset + 2 + i * 12;
+                writeU16(buf, entries[i].tag, off);
+                writeU16(buf, entries[i].type, off + 2);
+                writeU32(buf, entries[i].count, off + 4);
+                entries[i].value.copy(buf, off + 8);
+            }
+            // Next IFD pointer
+            writeU32(buf, ifd1Offset, ifd0Offset + 2 + entries.length * 12);
+            // Remote data
+            if (remoteBlocks) {
+                for (var i = 0; i < remoteBlocks.length; i++) {
+                    remoteBlocks[i].copy(buf, remoteOffsets[i]);
+                }
+            }
+            // IFD1
+            if (nextIFDEntries && ifd1Offset > 0) {
+                writeU16(buf, nextIFDEntries.length, ifd1Offset);
+                for (var i = 0; i < nextIFDEntries.length; i++) {
+                    var off = ifd1Offset + 2 + i * 12;
+                    writeU16(buf, nextIFDEntries[i].tag, off);
+                    writeU16(buf, nextIFDEntries[i].type, off + 2);
+                    writeU32(buf, nextIFDEntries[i].count, off + 4);
+                    nextIFDEntries[i].value.copy(buf, off + 8);
+                }
+                writeU32(buf, 0, ifd1Offset + 2 + nextIFDEntries.length * 12);
+            }
+            return buf;
+        }
+        function makeValueU32(le, val) {
+            var b = Buffer.alloc(4);
+            if (le)
+                b.writeUInt32LE(val, 0);
+            else
+                b.writeUInt32BE(val, 0);
+            return b;
+        }
+        function makeValueU16Padded(le, val) {
+            var b = Buffer.alloc(4, 0);
+            if (le)
+                b.writeUInt16LE(val, 0);
+            else
+                b.writeUInt16BE(val, 0);
+            return b;
+        }
+        it('should detect LE TIFF', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var tiff, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        tiff = buildTIFF(true, [
+                            { tag: 0x0100, type: 3, count: 1, value: makeValueU16Padded(true, 640) }
+                        ]);
+                        return [4 /*yield*/, processBuffer(tiff)];
+                    case 1:
+                        output = _a.sent();
+                        assert.equal(output[0], 0x49);
+                        assert.equal(output[1], 0x49);
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should detect BE TIFF', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var tiff, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        tiff = buildTIFF(false, [
+                            { tag: 0x0100, type: 3, count: 1, value: makeValueU16Padded(false, 640) }
+                        ]);
+                        return [4 /*yield*/, processBuffer(tiff)];
+                    case 1:
+                        output = _a.sent();
+                        assert.equal(output[0], 0x4D);
+                        assert.equal(output[1], 0x4D);
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should strip ExifIFD pointer and zero sub-IFD', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var le, subIFD, subIFDOffset, tiff, output, entryCount, remainingTag, subIFDRegion;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        le = true;
+                        subIFD = Buffer.alloc(2 + 1 * 12 + 4, 0);
+                        subIFD.writeUInt16LE(1, 0); // 1 entry
+                        subIFD.writeUInt16LE(0x9000, 2); // ExifVersion
+                        subIFD.writeUInt16LE(7, 4); // UNDEFINED
+                        subIFD.writeUInt32LE(4, 6); // count
+                        subIFD.write('0231', 10); // value inline
+                        subIFDOffset = 8 + 2 + 2 * 12 + 4;
+                        tiff = buildTIFF(le, [
+                            { tag: 0x0100, type: 3, count: 1, value: makeValueU16Padded(le, 640) },
+                            { tag: 0x8769, type: 4, count: 1, value: makeValueU32(le, subIFDOffset) } // ExifIFD - strip
+                        ], [subIFD]);
+                        return [4 /*yield*/, processBuffer(tiff)
+                            // ExifIFD entry should be gone, only ImageWidth remains
+                        ];
+                    case 1:
+                        output = _a.sent();
+                        entryCount = output.readUInt16LE(8);
+                        assert.equal(entryCount, 1, 'Should have 1 entry after stripping');
+                        remainingTag = output.readUInt16LE(10);
+                        assert.equal(remainingTag, 0x0100, 'Remaining tag should be ImageWidth');
+                        subIFDRegion = output.slice(subIFDOffset, subIFDOffset + subIFD.length);
+                        assert.ok(subIFDRegion.every(function (b) { return b === 0; }), 'Sub-IFD should be zeroed');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should strip GPSIFD pointer', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var le, subIFDOffset, subIFD, tiff, output, entryCount;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        le = true;
+                        subIFDOffset = 8 + 2 + 1 * 12 + 4;
+                        subIFD = Buffer.alloc(2 + 4, 0) // empty sub-IFD: 0 entries + next=0
+                        ;
+                        tiff = buildTIFF(le, [
+                            { tag: 0x8825, type: 4, count: 1, value: makeValueU32(le, subIFDOffset) } // GPSIFD
+                        ], [subIFD]);
+                        return [4 /*yield*/, processBuffer(tiff)];
+                    case 1:
+                        output = _a.sent();
+                        entryCount = output.readUInt16LE(8);
+                        assert.equal(entryCount, 0, 'Should have 0 entries after stripping GPS');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should strip XMP data (remote)', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var le, xmpData, remoteOffset, tiff, output, xmpRegion;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        le = true;
+                        xmpData = Buffer.from('<x:xmpmeta>secret XMP data here!</x:xmpmeta>');
+                        remoteOffset = 8 + 2 + 2 * 12 + 4;
+                        tiff = buildTIFF(le, [
+                            { tag: 0x0100, type: 3, count: 1, value: makeValueU16Padded(le, 640) },
+                            { tag: 0x02BC, type: 1, count: xmpData.length, value: makeValueU32(le, remoteOffset) } // XMP
+                        ], [xmpData]);
+                        return [4 /*yield*/, processBuffer(tiff)];
+                    case 1:
+                        output = _a.sent();
+                        xmpRegion = output.slice(remoteOffset, remoteOffset + xmpData.length);
+                        assert.ok(xmpRegion.every(function (b) { return b === 0; }), 'XMP data should be zeroed');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should strip inline metadata (short ImageDescription)', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var le, value, tiff, output, entryCount, tag;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        le = true;
+                        value = Buffer.alloc(4, 0);
+                        value.write('Hi', 0);
+                        tiff = buildTIFF(le, [
+                            { tag: 0x010E, type: 2, count: 2, value: value },
+                            { tag: 0x0100, type: 3, count: 1, value: makeValueU16Padded(le, 320) }
+                        ]);
+                        return [4 /*yield*/, processBuffer(tiff)];
+                    case 1:
+                        output = _a.sent();
+                        entryCount = output.readUInt16LE(8);
+                        assert.equal(entryCount, 1, 'Only ImageWidth should remain');
+                        tag = output.readUInt16LE(10);
+                        assert.equal(tag, 0x0100);
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should strip remote metadata (long ImageDescription)', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var le, desc, remoteOffset, tiff, output, descRegion;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        le = true;
+                        desc = Buffer.from('This is a long image description that exceeds 4 bytes');
+                        remoteOffset = 8 + 2 + 2 * 12 + 4;
+                        tiff = buildTIFF(le, [
+                            { tag: 0x0100, type: 3, count: 1, value: makeValueU16Padded(le, 640) },
+                            { tag: 0x010E, type: 2, count: desc.length, value: makeValueU32(le, remoteOffset) }
+                        ], [desc]);
+                        return [4 /*yield*/, processBuffer(tiff)];
+                    case 1:
+                        output = _a.sent();
+                        descRegion = output.slice(remoteOffset, remoteOffset + desc.length);
+                        assert.ok(descRegion.every(function (b) { return b === 0; }), 'Remote description should be zeroed');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should preserve image tags', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var le, tiff, output, entryCount;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        le = true;
+                        tiff = buildTIFF(le, [
+                            { tag: 0x0100, type: 3, count: 1, value: makeValueU16Padded(le, 640) },
+                            { tag: 0x0101, type: 3, count: 1, value: makeValueU16Padded(le, 480) },
+                            { tag: 0x0102, type: 3, count: 1, value: makeValueU16Padded(le, 8) } // BitsPerSample
+                        ]);
+                        return [4 /*yield*/, processBuffer(tiff)];
+                    case 1:
+                        output = _a.sent();
+                        entryCount = output.readUInt16LE(8);
+                        assert.equal(entryCount, 3, 'All 3 image tags should be preserved');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should walk IFD chain and strip metadata in second IFD', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var le, tiff, output, ifd0Count, ifd1Ptr, ifd1Count, tag;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        le = true;
+                        tiff = buildTIFF(le, [
+                            { tag: 0x0100, type: 3, count: 1, value: makeValueU16Padded(le, 640) }
+                        ], [], [
+                            { tag: 0x010E, type: 2, count: 2, value: Buffer.from('Hi\0\0') },
+                            { tag: 0x0101, type: 3, count: 1, value: makeValueU16Padded(le, 480) }
+                        ]);
+                        return [4 /*yield*/, processBuffer(tiff)
+                            // IFD0 should still have 1 entry
+                        ];
+                    case 1:
+                        output = _a.sent();
+                        ifd0Count = output.readUInt16LE(8);
+                        assert.equal(ifd0Count, 1);
+                        ifd1Ptr = output.readUInt32LE(8 + 2 + 1 * 12);
+                        if (ifd1Ptr > 0 && ifd1Ptr + 2 <= output.length) {
+                            ifd1Count = output.readUInt16LE(ifd1Ptr);
+                            assert.equal(ifd1Count, 1, 'IFD1 should have 1 entry after stripping ImageDescription');
+                            tag = output.readUInt16LE(ifd1Ptr + 2);
+                            assert.equal(tag, 0x0101, 'Remaining tag in IFD1 should be ImageLength');
+                        }
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should handle truncated TIFF without crashing', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var truncated, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        truncated = Buffer.from('49492a00', 'hex') // Just the header, no IFD offset data
+                        ;
+                        return [4 /*yield*/, processBuffer(truncated)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(output.length === truncated.length, 'Should pass through unchanged');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+    });
+    describe('ISOBMFF support (HEIC/AVIF)', function () {
+        function processBuffer(input) {
+            return new Promise(function (resolve, reject) {
+                var writer = new streamBuffers.WritableStreamBuffer();
+                var readable = stream.Readable.from([input]);
+                readable.pipe(new ExifBeGone()).pipe(writer)
+                    .on('finish', function () { return resolve(writer.getContents()); })
+                    .on('error', reject);
+            });
+        }
+        function writeBox(type, payload) {
+            var size = 8 + payload.length;
+            var buf = Buffer.alloc(size);
+            buf.writeUInt32BE(size, 0);
+            buf.write(type, 4, 4, 'utf-8');
+            payload.copy(buf, 8);
+            return buf;
+        }
+        function writeFullBox(type, version, flags, payload) {
+            var vf = Buffer.alloc(4);
+            vf.writeUInt32BE((version << 24) | (flags & 0xFFFFFF), 0);
+            return writeBox(type, Buffer.concat([vf, payload]));
+        }
+        // Build a minimal ISOBMFF with ftyp, meta (with iinf, iloc), and mdat
+        function buildISOBMFF(brand, items, imageData) {
+            // ftyp box
+            var ftypPayload = Buffer.alloc(8);
+            ftypPayload.write(brand, 0, 4, 'utf-8');
+            ftypPayload.writeUInt32BE(0, 4); // minor version
+            var ftypBox = writeBox('ftyp', ftypPayload);
+            // We'll compute mdat content and offsets after knowing the layout
+            // First build iinf and iloc, then compute mdat offset
+            // Build infe boxes
+            var infeBoxes = [];
+            for (var _i = 0, items_1 = items; _i < items_1.length; _i++) {
+                var item = items_1[_i];
+                // infe v2: item_id(2) + protection_index(2) + item_type(4)
+                var infePayload = Buffer.alloc(8);
+                infePayload.writeUInt16BE(item.itemId, 0);
+                infePayload.writeUInt16BE(0, 2); // protection index
+                infePayload.write(item.itemType, 4, 4, 'utf-8');
+                infeBoxes.push(writeFullBox('infe', 2, 0, infePayload));
+            }
+            // iinf box: version 0, entry count (2 bytes)
+            var iinfPayload = Buffer.alloc(2);
+            iinfPayload.writeUInt16BE(items.length, 0);
+            var iinfContent = Buffer.concat(__spreadArray([iinfPayload], infeBoxes, true));
+            var iinfBox = writeFullBox('iinf', 0, 0, iinfContent);
+            // iloc box: version 0, offset_size=4, length_size=4, base_offset_size=0, reserved=0
+            // Items: item_id(2), data_ref_idx(2), base_offset(0), extent_count(2), offset(4), length(4)
+            var ilocHeaderSize = 2 + 2; // size nibbles + item count
+            var ilocItemsSize = 0;
+            for (var _a = 0, items_2 = items; _a < items_2.length; _a++) {
+                var _item = items_2[_a];
+                ilocItemsSize += 2 + 2 + 2 + 4 + 4; // itemId + dataRefIdx + extCount + offset + length
+            }
+            if (imageData) {
+                ilocItemsSize += 2 + 2 + 2 + 4 + 4; // for image item
+            }
+            // We need to know mdat offset to set extent offsets.
+            // Layout: ftyp + meta + mdat
+            // meta = writeFullBox('meta', 0, 0, iinf + iloc)
+            // We need to pre-calculate sizes.
+            // iloc payload (without offsets yet - we'll fill them in)
+            var ilocItemCount = items.length + (imageData ? 1 : 0);
+            var ilocPayloadBuf = Buffer.alloc(ilocHeaderSize + ilocItemsSize);
+            ilocPayloadBuf[0] = 0x44; // offset_size=4, length_size=4
+            ilocPayloadBuf[1] = 0x00; // base_offset_size=0, reserved=0
+            ilocPayloadBuf.writeUInt16BE(ilocItemCount, 2);
+            // Meta size calculation
+            var ilocBox = writeFullBox('iloc', 0, 0, ilocPayloadBuf);
+            var metaContent = Buffer.concat([iinfBox, ilocBox]);
+            var metaBox = writeFullBox('meta', 0, 0, metaContent);
+            // mdat content: all items then imageData
+            var mdatParts = [];
+            for (var _b = 0, items_3 = items; _b < items_3.length; _b++) {
+                var item = items_3[_b];
+                mdatParts.push(item.data);
+            }
+            if (imageData)
+                mdatParts.push(imageData);
+            var mdatPayload = Buffer.concat(mdatParts);
+            writeBox('mdat', mdatPayload); // just for size estimation
+            // Now we know the mdat offset: ftyp.length + meta.length + 8 (mdat header)
+            var mdatDataOffset = ftypBox.length + metaBox.length + 8;
+            // Rebuild iloc with correct offsets
+            var pos = 4; // after item count in iloc payload
+            var dataPos = mdatDataOffset;
+            for (var _c = 0, items_4 = items; _c < items_4.length; _c++) {
+                var item = items_4[_c];
+                ilocPayloadBuf.writeUInt16BE(item.itemId, pos);
+                pos += 2;
+                ilocPayloadBuf.writeUInt16BE(0, pos);
+                pos += 2; // data_ref_idx
+                ilocPayloadBuf.writeUInt16BE(1, pos);
+                pos += 2; // extent_count
+                ilocPayloadBuf.writeUInt32BE(dataPos, pos);
+                pos += 4;
+                ilocPayloadBuf.writeUInt32BE(item.data.length, pos);
+                pos += 4;
+                dataPos += item.data.length;
+            }
+            if (imageData) {
+                var imgItemId = items.length + 1;
+                ilocPayloadBuf.writeUInt16BE(imgItemId, pos);
+                pos += 2;
+                ilocPayloadBuf.writeUInt16BE(0, pos);
+                pos += 2;
+                ilocPayloadBuf.writeUInt16BE(1, pos);
+                pos += 2;
+                ilocPayloadBuf.writeUInt32BE(dataPos, pos);
+                pos += 4;
+                ilocPayloadBuf.writeUInt32BE(imageData.length, pos);
+                pos += 4;
+            }
+            // Rebuild the full file with corrected iloc
+            var ilocBox2 = writeFullBox('iloc', 0, 0, ilocPayloadBuf);
+            var metaContent2 = Buffer.concat([iinfBox, ilocBox2]);
+            var metaBox2 = writeFullBox('meta', 0, 0, metaContent2);
+            // Recalculate if meta size changed
+            if (metaBox2.length !== metaBox.length) {
+                // Shouldn't happen since we pre-allocated, but handle it
+                var newMdatOffset = ftypBox.length + metaBox2.length + 8;
+                var pos2 = 4;
+                var dataPos2 = newMdatOffset;
+                for (var _d = 0, items_5 = items; _d < items_5.length; _d++) {
+                    var item = items_5[_d];
+                    ilocPayloadBuf.writeUInt16BE(item.itemId, pos2);
+                    pos2 += 2;
+                    pos2 += 2; // data_ref_idx
+                    pos2 += 2; // extent_count
+                    ilocPayloadBuf.writeUInt32BE(dataPos2, pos2);
+                    pos2 += 4;
+                    ilocPayloadBuf.writeUInt32BE(item.data.length, pos2);
+                    pos2 += 4;
+                    dataPos2 += item.data.length;
+                }
+                if (imageData) {
+                    ilocPayloadBuf.writeUInt16BE(items.length + 1, pos2);
+                    pos2 += 2;
+                    pos2 += 2;
+                    pos2 += 2;
+                    ilocPayloadBuf.writeUInt32BE(dataPos2, pos2);
+                    pos2 += 4;
+                    ilocPayloadBuf.writeUInt32BE(imageData.length, pos2);
+                    pos2 += 4;
+                }
+            }
+            var finalIlocBox = writeFullBox('iloc', 0, 0, ilocPayloadBuf);
+            var finalMetaContent = Buffer.concat([iinfBox, finalIlocBox]);
+            var finalMetaBox = writeFullBox('meta', 0, 0, finalMetaContent);
+            var finalMdatBox = writeBox('mdat', mdatPayload);
+            return Buffer.concat([ftypBox, finalMetaBox, finalMdatBox]);
+        }
+        it('should detect HEIC (ftyp brand heic)', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var heic, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        heic = buildISOBMFF('heic', [], Buffer.from('imagedata'));
+                        return [4 /*yield*/, processBuffer(heic)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(output.slice(4, 8).toString() === 'ftyp');
+                        assert.ok(output.slice(8, 12).toString() === 'heic');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should detect AVIF (ftyp brand avif)', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var avif, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        avif = buildISOBMFF('avif', [], Buffer.from('imagedata'));
+                        return [4 /*yield*/, processBuffer(avif)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(output.slice(4, 8).toString() === 'ftyp');
+                        assert.ok(output.slice(8, 12).toString() === 'avif');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should zero Exif item data', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var exifData, file, output, exifStr;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        exifData = Buffer.from('Exif\0\0fake exif data here!!');
+                        file = buildISOBMFF('heic', [
+                            { itemId: 1, itemType: 'Exif', data: exifData }
+                        ], Buffer.from('real image pixels'));
+                        return [4 /*yield*/, processBuffer(file)
+                            // Find the exif data region - it should be zeroed
+                        ];
+                    case 1:
+                        output = _a.sent();
+                        exifStr = output.toString('binary');
+                        assert.ok(exifStr.indexOf('fake exif data') === -1, 'Exif data should be zeroed');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should zero XMP (mime) item data', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var xmpData, file, output, outStr;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        xmpData = Buffer.from('<x:xmpmeta>secret XMP metadata</x:xmpmeta>');
+                        file = buildISOBMFF('heic', [
+                            { itemId: 1, itemType: 'mime', data: xmpData }
+                        ], Buffer.from('real image pixels'));
+                        return [4 /*yield*/, processBuffer(file)];
+                    case 1:
+                        output = _a.sent();
+                        outStr = output.toString('binary');
+                        assert.ok(outStr.indexOf('secret XMP') === -1, 'XMP data should be zeroed');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should preserve non-metadata item data', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var exifData, imageData, file, output, outStr;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        exifData = Buffer.from('Exif\0\0secret exif');
+                        imageData = Buffer.from('precious image pixels that must be preserved');
+                        file = buildISOBMFF('heic', [
+                            { itemId: 1, itemType: 'Exif', data: exifData }
+                        ], imageData);
+                        return [4 /*yield*/, processBuffer(file)];
+                    case 1:
+                        output = _a.sent();
+                        outStr = output.toString('binary');
+                        assert.ok(outStr.indexOf('precious image pixels') !== -1, 'Image data should be preserved');
+                        assert.ok(outStr.indexOf('secret exif') === -1, 'Exif should be removed');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should pass through file with no meta box', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var ftypPayload, sizeF, ftypBox, mdatContent, sizeM, mdatBox, file, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        ftypPayload = Buffer.alloc(8);
+                        ftypPayload.write('heic', 0, 4, 'utf-8');
+                        sizeF = 8 + ftypPayload.length;
+                        ftypBox = Buffer.alloc(sizeF);
+                        ftypBox.writeUInt32BE(sizeF, 0);
+                        ftypBox.write('ftyp', 4, 4, 'utf-8');
+                        ftypPayload.copy(ftypBox, 8);
+                        mdatContent = Buffer.from('image data here');
+                        sizeM = 8 + mdatContent.length;
+                        mdatBox = Buffer.alloc(sizeM);
+                        mdatBox.writeUInt32BE(sizeM, 0);
+                        mdatBox.write('mdat', 4, 4, 'utf-8');
+                        mdatContent.copy(mdatBox, 8);
+                        file = Buffer.concat([ftypBox, mdatBox]);
+                        return [4 /*yield*/, processBuffer(file)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(Buffer.compare(output, file) === 0, 'Should pass through unchanged');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should handle truncated file without crashing', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var buf, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        buf = Buffer.alloc(12);
+                        buf.writeUInt32BE(12, 0);
+                        buf.write('ftyp', 4, 4, 'utf-8');
+                        buf.write('heic', 8, 4, 'utf-8');
+                        return [4 /*yield*/, processBuffer(buf)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(output.length === buf.length, 'Should pass through unchanged');
                         return [2 /*return*/];
                 }
             });

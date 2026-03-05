@@ -6,7 +6,7 @@ declare class ExifTransformer extends Transform {
     remainingScrubBytes: number | undefined;
     remainingGoodBytes: number | undefined;
     pending: Array<Buffer>;
-    mode: 'png' | 'webp' | 'pdf' | 'other' | undefined;
+    mode: 'png' | 'webp' | 'pdf' | 'tiff' | 'isobmff' | 'other' | undefined;
     pdfState: 'scanning' | 'in_dict' | 'in_stream';
     pdfDictBuffer: Buffer;
     pdfDictNesting: number;
@@ -31,6 +31,27 @@ declare class ExifTransformer extends Transform {
     _scrubPNG(atEnd: Boolean, chunk?: Buffer): void;
     _processPNGGood(chunk: Buffer): Buffer;
     _scrubWEBP(atEnd: Boolean, chunk?: Buffer): void;
+    _scrubTIFF(buf: Buffer): Buffer;
+    _tiffZeroSubIFD(buf: Buffer, offset: number, readU16: (b: Buffer, o: number) => number, readU32: (b: Buffer, o: number) => number, visited: Set<number>): void;
+    _scrubISOBMFF(buf: Buffer): Buffer;
+    _isobmffParseBoxes(buf: Buffer, start: number, end: number): Array<{
+        type: string;
+        offset: number;
+        size: number;
+        dataOffset: number;
+    }>;
+    _isobmffReadUintBE(buf: Buffer, offset: number, byteCount: number): number;
+    _isobmffParseIinf(buf: Buffer, dataOffset: number, boxEnd: number): Array<{
+        itemId: number;
+        itemType: string;
+    }>;
+    _isobmffParseIloc(buf: Buffer, dataOffset: number, boxEnd: number): Array<{
+        itemId: number;
+        extents: Array<{
+            offset: number;
+            length: number;
+        }>;
+    }>;
     _pdfPush(data: Buffer): void;
     _pdfSkip(n: number): void;
     _pdfPushModified(origLen: number, newData: Buffer): void;

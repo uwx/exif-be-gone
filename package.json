@@ -1,7 +1,7 @@
 {
   "name": "exif-be-gone",
-  "version": "1.5.1",
-  "description": "Remove EXIF data from your image files.",
+  "version": "1.6.0",
+  "description": "Remove EXIF data from your files.",
   "main": "index.js",
   "bin": {
     "exif-be-gone": "cli.js"

@@ -2,9 +2,15 @@
 
 Zero dependency stream transformer to remove data that could be potentially private.
 
-For jpegs and tiffs, it currently looks for data in the app1 section that is either exif, xmp, or FLIR and removes it from the stream.
+### Supported formats
 
-For png, it looks for `tIME`, `iTXt`, `tEXt`, `zTXt`, `eXIf` and `dSIG` chunks and removes those.
+- **JPEG** — Removes APP1 sections containing Exif, XMP, or FLIR data.
+- **PNG** — Removes `tIME`, `iTXt`, `tEXt`, `zTXt`, `eXIf`, and `dSIG` chunks.
+- **WebP** — Removes `EXIF` and `XMP` RIFF chunks.
+- **TIFF** — Strips Exif, GPS, and Interop sub-IFDs, XMP, IPTC, Photoshop image resources, artist, copyright, and image description tags. Supports both little-endian and big-endian byte orders.
+- **HEIC/HEIF** — Zeroes Exif and XMP item data within the ISOBMFF container.
+- **AVIF** — Zeroes Exif and XMP item data within the ISOBMFF container.
+- **PDF** — Scrubs Info dictionary values (title, author, etc.) and removes XMP metadata streams. Strips embedded JPEG Exif data. Adjusts cross-reference offsets.
 
 ## Installation
 
