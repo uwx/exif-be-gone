@@ -42,6 +42,8 @@ var tiffBE = Buffer.from('4d4d002a', 'hex'); // MM\0*
 // ISOBMFF brands (HEIC + AVIF)
 var ftypMarker = Buffer.from('ftyp', 'utf-8');
 var isobmffBrands = ['heic', 'heix', 'mif1', 'msf1', 'hevx', 'hevc', 'avif', 'avis'];
+// JPEG XL ISOBMFF container signature (12 bytes)
+var jxlContainerSig = Buffer.from('0000000c4a584c200d0a870a', 'hex');
 // TIFF metadata tags to strip
 var tiffStripTags = new Set([
     0x010E, 0x013B, 0x02BC, 0x8298, 0x83BB,
@@ -106,6 +108,9 @@ var ExifTransformer = /** @class */ (function (_super) {
                 else {
                     this.mode = 'other';
                 }
+            }
+            else if (chunk.length >= 12 && jxlContainerSig.equals(Uint8Array.prototype.slice.call(chunk, 0, 12))) {
+                this.mode = 'isobmff';
             }
             else {
                 this.mode = 'other';
