@@ -900,4 +900,263 @@ describe('Exif be gone', function () {
             });
         }); });
     });
+    describe('GIF support', function () {
+        function scrubBuffer(input) {
+            return new Promise(function (resolve, reject) {
+                var writer = new streamBuffers.WritableStreamBuffer();
+                var readable = stream.Readable.from([input]);
+                readable.pipe(new ExifBeGone()).pipe(writer)
+                    .on('finish', function () { return resolve(writer.getContents()); })
+                    .on('error', reject);
+            });
+        }
+        // Build a minimal GIF89a with optional GCT and blocks
+        function buildGIF(blocks) {
+            // Header (6) + LSD (7) + GCT (6 bytes for 2-color) + blocks + trailer
+            var header = Buffer.from('GIF89a', 'ascii');
+            var lsd = Buffer.alloc(7);
+            lsd.writeUInt16LE(1, 0); // width
+            lsd.writeUInt16LE(1, 2); // height
+            lsd[4] = 0x80; // packed: GCT flag=1, color res=0, sort=0, GCT size=0 (2 colors)
+            lsd[5] = 0; // bg color
+            lsd[6] = 0; // pixel aspect
+            var gct = Buffer.alloc(6, 0); // 2 colors * 3 bytes
+            var trailer = Buffer.from([0x3B]);
+            return Buffer.concat(__spreadArray(__spreadArray([header, lsd, gct], blocks, true), [trailer], false));
+        }
+        function buildCommentExt(text) {
+            var intro = Buffer.from([0x21, 0xFE]);
+            var data = Buffer.from(text, 'ascii');
+            var subBlock = Buffer.alloc(1);
+            subBlock[0] = data.length;
+            var terminator = Buffer.from([0x00]);
+            return Buffer.concat([intro, subBlock, data, terminator]);
+        }
+        function buildAppExt(appId, payload) {
+            var intro = Buffer.from([0x21, 0xFF]);
+            var blockSize = Buffer.from([appId.length]);
+            var id = Buffer.from(appId, 'ascii');
+            var subBlockLen = Buffer.alloc(1);
+            subBlockLen[0] = payload.length;
+            var terminator = Buffer.from([0x00]);
+            return Buffer.concat([intro, blockSize, id, subBlockLen, payload, terminator]);
+        }
+        it('should detect GIF87a', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var buf, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        buf = Buffer.alloc(13);
+                        buf.write('GIF87a', 0, 6, 'ascii');
+                        buf.writeUInt16LE(1, 6);
+                        buf.writeUInt16LE(1, 8);
+                        buf[10] = 0;
+                        buf[11] = 0;
+                        buf[12] = 0;
+                        return [4 /*yield*/, scrubBuffer(buf)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(output.subarray(0, 6).toString('ascii') === 'GIF87a');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should detect GIF89a', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var gif, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        gif = buildGIF([]);
+                        return [4 /*yield*/, scrubBuffer(gif)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(output.subarray(0, 6).toString('ascii') === 'GIF89a');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should strip comment extension', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var comment, gif, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        comment = buildCommentExt('Secret comment here');
+                        gif = buildGIF([comment]);
+                        return [4 /*yield*/, scrubBuffer(gif)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(output.toString('ascii').indexOf('Secret comment') === -1, 'Comment should be stripped');
+                        assert.ok(output[output.length - 1] === 0x3B, 'Should end with trailer');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should strip XMP application extension', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var xmpPayload, xmpExt, gif, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        xmpPayload = Buffer.from('<x:xmpmeta>secret XMP</x:xmpmeta>');
+                        xmpExt = buildAppExt('XMP DataXMP', xmpPayload);
+                        gif = buildGIF([xmpExt]);
+                        return [4 /*yield*/, scrubBuffer(gif)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(output.toString('ascii').indexOf('secret XMP') === -1, 'XMP should be stripped');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should preserve NETSCAPE2.0 extension', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var netscapePayload, netscapeExt, gif, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        netscapePayload = Buffer.from([0x01, 0x00, 0x00]) // loop count
+                        ;
+                        netscapeExt = buildAppExt('NETSCAPE2.0', netscapePayload);
+                        gif = buildGIF([netscapeExt]);
+                        return [4 /*yield*/, scrubBuffer(gif)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(output.toString('ascii').indexOf('NETSCAPE2.0') !== -1, 'NETSCAPE2.0 should be preserved');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should preserve image data', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var imgDesc, lzwMin, imgData, imageBlock, comment, gif, output, hasImage, i;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        imgDesc = Buffer.alloc(10);
+                        imgDesc[0] = 0x2C; // image separator
+                        imgDesc.writeUInt16LE(0, 1); // left
+                        imgDesc.writeUInt16LE(0, 3); // top
+                        imgDesc.writeUInt16LE(1, 5); // width
+                        imgDesc.writeUInt16LE(1, 7); // height
+                        imgDesc[9] = 0; // packed
+                        lzwMin = Buffer.from([0x02]) // LZW minimum code size
+                        ;
+                        imgData = Buffer.from([0x02, 0x44, 0x01, 0x00]) // sub-block(2 bytes) + terminator
+                        ;
+                        imageBlock = Buffer.concat([imgDesc, lzwMin, imgData]);
+                        comment = buildCommentExt('Remove me');
+                        gif = buildGIF([comment, imageBlock]);
+                        return [4 /*yield*/, scrubBuffer(gif)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(output.toString('ascii').indexOf('Remove me') === -1, 'Comment stripped');
+                        hasImage = false;
+                        for (i = 0; i < output.length; i++) {
+                            if (output[i] === 0x2C) {
+                                hasImage = true;
+                                break;
+                            }
+                        }
+                        assert.ok(hasImage, 'Image data should be preserved');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should strip mixed metadata keeping animation', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var comment, xmpPayload, xmpExt, netscapePayload, netscapeExt, gif, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        comment = buildCommentExt('Author info');
+                        xmpPayload = Buffer.from('<xmp>data</xmp>');
+                        xmpExt = buildAppExt('XMP DataXMP', xmpPayload);
+                        netscapePayload = Buffer.from([0x01, 0x00, 0x00]);
+                        netscapeExt = buildAppExt('NETSCAPE2.0', netscapePayload);
+                        gif = buildGIF([comment, xmpExt, netscapeExt]);
+                        return [4 /*yield*/, scrubBuffer(gif)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(output.toString('ascii').indexOf('Author info') === -1, 'Comment stripped');
+                        assert.ok(output.toString('ascii').indexOf('<xmp>') === -1, 'XMP stripped');
+                        assert.ok(output.toString('ascii').indexOf('NETSCAPE2.0') !== -1, 'NETSCAPE kept');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should handle GIF with no extensions', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var gif, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        gif = buildGIF([]);
+                        return [4 /*yield*/, scrubBuffer(gif)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(output.length > 0);
+                        assert.ok(output[output.length - 1] === 0x3B, 'Should end with trailer');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should handle truncated GIF', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var buf, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        buf = Buffer.from('GIF89a', 'ascii');
+                        return [4 /*yield*/, scrubBuffer(buf)];
+                    case 1:
+                        output = _a.sent();
+                        assert.deepEqual(output, buf, 'Should pass through unchanged');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should strip comment from real GIF file (exiftool GIF.gif)', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var gifPath, input, output, hasComment, i;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        gifPath = 'exiftool-fixtures/t/images/GIF.gif';
+                        if (!fs.existsSync(gifPath))
+                            return [2 /*return*/]; // skip if fixture not available
+                        input = fs.readFileSync(gifPath);
+                        return [4 /*yield*/, scrubBuffer(input)
+                            // Verify comment extension is gone
+                        ];
+                    case 1:
+                        output = _a.sent();
+                        hasComment = false;
+                        for (i = 0; i < output.length - 1; i++) {
+                            if (output[i] === 0x21 && output[i + 1] === 0xFE) {
+                                hasComment = true;
+                                break;
+                            }
+                        }
+                        assert.ok(!hasComment, 'Comment extension should be stripped');
+                        // Verify XMP is gone
+                        assert.ok(output.toString('binary').indexOf('XMP DataXMP') === -1, 'XMP should be stripped');
+                        // Verify it's still a valid GIF
+                        assert.ok(output.subarray(0, 6).toString('ascii') === 'GIF89a' || output.subarray(0, 6).toString('ascii') === 'GIF87a');
+                        assert.ok(output[output.length - 1] === 0x3B, 'Should end with trailer');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should strip XMP from real GIF file (photoshop GIF)', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var gifPath, input, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        gifPath = 'metadata-extractor-images/gif/photoshop-8x12-32colors-alpha.gif';
+                        if (!fs.existsSync(gifPath))
+                            return [2 /*return*/];
+                        input = fs.readFileSync(gifPath);
+                        return [4 /*yield*/, scrubBuffer(input)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(output.toString('binary').indexOf('XMP DataXMP') === -1, 'XMP should be stripped');
+                        assert.ok(output.subarray(0, 3).toString('ascii') === 'GIF');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+    });
 });

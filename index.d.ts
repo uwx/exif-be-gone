@@ -6,7 +6,7 @@ declare class ExifTransformer extends Transform {
     remainingScrubBytes: number | undefined;
     remainingGoodBytes: number | undefined;
     pending: Array<Buffer>;
-    mode: 'png' | 'webp' | 'pdf' | 'tiff' | 'isobmff' | 'other' | undefined;
+    mode: 'png' | 'webp' | 'pdf' | 'tiff' | 'isobmff' | 'gif' | 'other' | undefined;
     pdfState: 'scanning' | 'in_dict' | 'in_stream';
     pdfDictBuffer: Buffer;
     pdfDictNesting: number;
@@ -30,6 +30,8 @@ declare class ExifTransformer extends Transform {
     _scrubOther(atEnd: Boolean, chunk?: Buffer): void;
     _scrubPNG(atEnd: Boolean, chunk?: Buffer): void;
     _processPNGGood(chunk: Buffer): Buffer;
+    _gifSkipSubBlocks(buf: Buffer, pos: number): number;
+    _scrubGIF(buf: Buffer): Buffer;
     _scrubWEBP(atEnd: Boolean, chunk?: Buffer): void;
     _scrubTIFF(buf: Buffer): Buffer;
     _tiffZeroSubIFD(buf: Buffer, offset: number, readU16: (b: Buffer, o: number) => number, readU32: (b: Buffer, o: number) => number, visited: Set<number>): void;

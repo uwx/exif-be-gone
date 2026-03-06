@@ -24,6 +24,11 @@ const isobmffBrands = ['heic', 'heix', 'mif1', 'msf1', 'hevx', 'hevc', 'avif', '
 // JPEG XL ISOBMFF container signature (12 bytes)
 const jxlContainerSig = Buffer.from('0000000c4a584c200d0a870a', 'hex')
 
+// GIF
+const gif87aMarker = Buffer.from('GIF87a', 'ascii')
+const gif89aMarker = Buffer.from('GIF89a', 'ascii')
+const xmpDataXMP = 'XMP DataXMP'
+
 // TIFF metadata tags to strip
 const tiffStripTags = new Set([
   0x010E, 0x013B, 0x02BC, 0x8298, 0x83BB,
@@ -41,7 +46,7 @@ class ExifTransformer extends Transform {
   remainingScrubBytes: number | undefined
   remainingGoodBytes: number | undefined
   pending: Array<Buffer>
-  mode: 'png' | 'webp' | 'pdf' | 'tiff' | 'isobmff' | 'other' | undefined
+  mode: 'png' | 'webp' | 'pdf' | 'tiff' | 'isobmff' | 'gif' | 'other' | undefined
 
   // PDF state
   pdfState: 'scanning' | 'in_dict' | 'in_stream'
@@ -106,6 +111,8 @@ class ExifTransformer extends Transform {
         }
       } else if (chunk.length >= 12 && jxlContainerSig.equals(Uint8Array.prototype.slice.call(chunk, 0, 12))) {
         this.mode = 'isobmff'
+      } else if (chunk.length >= 6 && (gif87aMarker.equals(Uint8Array.prototype.slice.call(chunk, 0, 6)) || gif89aMarker.equals(Uint8Array.prototype.slice.call(chunk, 0, 6)))) {
+        this.mode = 'gif'
       } else {
         this.mode = 'other'
       }
@@ -115,7 +122,7 @@ class ExifTransformer extends Transform {
       callback()
       return
     }
-    if (this.mode === 'tiff' || this.mode === 'isobmff') {
+    if (this.mode === 'tiff' || this.mode === 'isobmff' || this.mode === 'gif') {
       this.pending.push(chunk)
       callback()
       return
@@ -140,6 +147,12 @@ class ExifTransformer extends Transform {
     }
     if (this.mode === 'isobmff') {
       this.push(this._scrubISOBMFF(Buffer.concat(this.pending)))
+      this.pending.length = 0
+      callback()
+      return
+    }
+    if (this.mode === 'gif') {
+      this.push(this._scrubGIF(Buffer.concat(this.pending)))
       this.pending.length = 0
       callback()
       return
@@ -278,6 +291,94 @@ class ExifTransformer extends Transform {
       this.remainingGoodBytes = undefined
       return remaining
     }
+  }
+
+  _gifSkipSubBlocks (buf: Buffer, pos: number): number {
+    while (pos < buf.length && buf[pos] !== 0) {
+      pos += buf[pos] + 1
+    }
+    return pos < buf.length ? pos + 1 : pos
+  }
+
+  _scrubGIF (buf: Buffer): Buffer {
+    if (buf.length < 13) return buf
+
+    const parts: Buffer[] = []
+    const packed = buf[10]
+    const gctFlag = (packed >> 7) & 1
+    const gctSize = gctFlag ? 3 * (1 << ((packed & 0x07) + 1)) : 0
+    const headerEnd = 13 + gctSize
+
+    if (headerEnd > buf.length) return buf
+    parts.push(buf.subarray(0, headerEnd))
+
+    let pos = headerEnd
+    while (pos < buf.length) {
+      const intro = buf[pos]
+
+      if (intro === 0x3B) {
+        parts.push(buf.subarray(pos, pos + 1))
+        break
+      }
+
+      if (intro === 0x2C) {
+        if (pos + 10 > buf.length) break
+        const lctFlag = (buf[pos + 9] >> 7) & 1
+        const lctSize = lctFlag ? 3 * (1 << ((buf[pos + 9] & 0x07) + 1)) : 0
+        let dataStart = pos + 10 + lctSize
+        if (dataStart >= buf.length) break
+        dataStart++
+        const blockEnd = this._gifSkipSubBlocks(buf, dataStart)
+        parts.push(buf.subarray(pos, blockEnd))
+        pos = blockEnd
+        continue
+      }
+
+      if (intro === 0x21) {
+        if (pos + 1 >= buf.length) break
+        const label = buf[pos + 1]
+
+        if (label === 0xFE) {
+          const blockEnd = this._gifSkipSubBlocks(buf, pos + 2)
+          pos = blockEnd
+          continue
+        }
+
+        if (label === 0xFF) {
+          if (pos + 2 >= buf.length) break
+          const blockSize = buf[pos + 2]
+          if (pos + 3 + blockSize > buf.length) break
+          const appId = buf.subarray(pos + 3, pos + 3 + blockSize).toString('ascii')
+          const blockEnd = this._gifSkipSubBlocks(buf, pos + 3 + blockSize)
+
+          if (appId === xmpDataXMP) {
+            pos = blockEnd
+            continue
+          }
+
+          parts.push(buf.subarray(pos, blockEnd))
+          pos = blockEnd
+          continue
+        }
+
+        if (label === 0xF9) {
+          const blockEnd = pos + 2 + 1 + buf[pos + 2] + 1
+          parts.push(buf.subarray(pos, blockEnd))
+          pos = blockEnd
+          continue
+        }
+
+        const blockEnd = this._gifSkipSubBlocks(buf, pos + 2)
+        parts.push(buf.subarray(pos, blockEnd))
+        pos = blockEnd
+        continue
+      }
+
+      parts.push(buf.subarray(pos))
+      break
+    }
+
+    return Buffer.concat(parts)
   }
 
   _scrubWEBP (atEnd: Boolean, chunk?: Buffer) {

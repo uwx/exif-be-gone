@@ -44,6 +44,10 @@ var ftypMarker = Buffer.from('ftyp', 'utf-8');
 var isobmffBrands = ['heic', 'heix', 'mif1', 'msf1', 'hevx', 'hevc', 'avif', 'avis'];
 // JPEG XL ISOBMFF container signature (12 bytes)
 var jxlContainerSig = Buffer.from('0000000c4a584c200d0a870a', 'hex');
+// GIF
+var gif87aMarker = Buffer.from('GIF87a', 'ascii');
+var gif89aMarker = Buffer.from('GIF89a', 'ascii');
+var xmpDataXMP = 'XMP DataXMP';
 // TIFF metadata tags to strip
 var tiffStripTags = new Set([
     0x010E, 0x013B, 0x02BC, 0x8298, 0x83BB,
@@ -112,6 +116,9 @@ var ExifTransformer = /** @class */ (function (_super) {
             else if (chunk.length >= 12 && jxlContainerSig.equals(Uint8Array.prototype.slice.call(chunk, 0, 12))) {
                 this.mode = 'isobmff';
             }
+            else if (chunk.length >= 6 && (gif87aMarker.equals(Uint8Array.prototype.slice.call(chunk, 0, 6)) || gif89aMarker.equals(Uint8Array.prototype.slice.call(chunk, 0, 6)))) {
+                this.mode = 'gif';
+            }
             else {
                 this.mode = 'other';
             }
@@ -121,7 +128,7 @@ var ExifTransformer = /** @class */ (function (_super) {
             callback();
             return;
         }
-        if (this.mode === 'tiff' || this.mode === 'isobmff') {
+        if (this.mode === 'tiff' || this.mode === 'isobmff' || this.mode === 'gif') {
             this.pending.push(chunk);
             callback();
             return;
@@ -145,6 +152,12 @@ var ExifTransformer = /** @class */ (function (_super) {
         }
         if (this.mode === 'isobmff') {
             this.push(this._scrubISOBMFF(Buffer.concat(this.pending)));
+            this.pending.length = 0;
+            callback();
+            return;
+        }
+        if (this.mode === 'gif') {
+            this.push(this._scrubGIF(Buffer.concat(this.pending)));
             this.pending.length = 0;
             callback();
             return;
@@ -285,6 +298,85 @@ var ExifTransformer = /** @class */ (function (_super) {
             this.remainingGoodBytes = undefined;
             return remaining;
         }
+    };
+    ExifTransformer.prototype._gifSkipSubBlocks = function (buf, pos) {
+        while (pos < buf.length && buf[pos] !== 0) {
+            pos += buf[pos] + 1;
+        }
+        return pos < buf.length ? pos + 1 : pos;
+    };
+    ExifTransformer.prototype._scrubGIF = function (buf) {
+        if (buf.length < 13)
+            return buf;
+        var parts = [];
+        var packed = buf[10];
+        var gctFlag = (packed >> 7) & 1;
+        var gctSize = gctFlag ? 3 * (1 << ((packed & 0x07) + 1)) : 0;
+        var headerEnd = 13 + gctSize;
+        if (headerEnd > buf.length)
+            return buf;
+        parts.push(buf.subarray(0, headerEnd));
+        var pos = headerEnd;
+        while (pos < buf.length) {
+            var intro = buf[pos];
+            if (intro === 0x3B) {
+                parts.push(buf.subarray(pos, pos + 1));
+                break;
+            }
+            if (intro === 0x2C) {
+                if (pos + 10 > buf.length)
+                    break;
+                var lctFlag = (buf[pos + 9] >> 7) & 1;
+                var lctSize = lctFlag ? 3 * (1 << ((buf[pos + 9] & 0x07) + 1)) : 0;
+                var dataStart = pos + 10 + lctSize;
+                if (dataStart >= buf.length)
+                    break;
+                dataStart++;
+                var blockEnd = this._gifSkipSubBlocks(buf, dataStart);
+                parts.push(buf.subarray(pos, blockEnd));
+                pos = blockEnd;
+                continue;
+            }
+            if (intro === 0x21) {
+                if (pos + 1 >= buf.length)
+                    break;
+                var label = buf[pos + 1];
+                if (label === 0xFE) {
+                    var blockEnd_1 = this._gifSkipSubBlocks(buf, pos + 2);
+                    pos = blockEnd_1;
+                    continue;
+                }
+                if (label === 0xFF) {
+                    if (pos + 2 >= buf.length)
+                        break;
+                    var blockSize = buf[pos + 2];
+                    if (pos + 3 + blockSize > buf.length)
+                        break;
+                    var appId = buf.subarray(pos + 3, pos + 3 + blockSize).toString('ascii');
+                    var blockEnd_2 = this._gifSkipSubBlocks(buf, pos + 3 + blockSize);
+                    if (appId === xmpDataXMP) {
+                        pos = blockEnd_2;
+                        continue;
+                    }
+                    parts.push(buf.subarray(pos, blockEnd_2));
+                    pos = blockEnd_2;
+                    continue;
+                }
+                if (label === 0xF9) {
+                    var blockEnd_3 = pos + 2 + 1 + buf[pos + 2] + 1;
+                    parts.push(buf.subarray(pos, blockEnd_3));
+                    pos = blockEnd_3;
+                    continue;
+                }
+                var blockEnd = this._gifSkipSubBlocks(buf, pos + 2);
+                parts.push(buf.subarray(pos, blockEnd));
+                pos = blockEnd;
+                continue;
+            }
+            parts.push(buf.subarray(pos));
+            break;
+        }
+        return Buffer.concat(parts);
     };
     ExifTransformer.prototype._scrubWEBP = function (atEnd, chunk) {
         var pendingChunk = chunk ? Buffer.concat(__spreadArray(__spreadArray([], this.pending, true), [chunk], false)) : Buffer.concat(this.pending);

@@ -678,4 +678,169 @@ describe('Exif be gone', () => {
       assert.ok(output.length === buf.length, 'Should pass through unchanged')
     })
   })
+
+  describe('GIF support', () => {
+    function scrubBuffer (input: Buffer): Promise<Buffer> {
+      return new Promise((resolve, reject) => {
+        const writer = new streamBuffers.WritableStreamBuffer()
+        const readable = stream.Readable.from([input])
+        readable.pipe(new ExifBeGone()).pipe(writer)
+          .on('finish', () => resolve(writer.getContents()))
+          .on('error', reject)
+      })
+    }
+
+    // Build a minimal GIF89a with optional GCT and blocks
+    function buildGIF (blocks: Buffer[]): Buffer {
+      // Header (6) + LSD (7) + GCT (6 bytes for 2-color) + blocks + trailer
+      const header = Buffer.from('GIF89a', 'ascii')
+      const lsd = Buffer.alloc(7)
+      lsd.writeUInt16LE(1, 0) // width
+      lsd.writeUInt16LE(1, 2) // height
+      lsd[4] = 0x80 // packed: GCT flag=1, color res=0, sort=0, GCT size=0 (2 colors)
+      lsd[5] = 0 // bg color
+      lsd[6] = 0 // pixel aspect
+      const gct = Buffer.alloc(6, 0) // 2 colors * 3 bytes
+      const trailer = Buffer.from([0x3B])
+      return Buffer.concat([header, lsd, gct, ...blocks, trailer])
+    }
+
+    function buildCommentExt (text: string): Buffer {
+      const intro = Buffer.from([0x21, 0xFE])
+      const data = Buffer.from(text, 'ascii')
+      const subBlock = Buffer.alloc(1)
+      subBlock[0] = data.length
+      const terminator = Buffer.from([0x00])
+      return Buffer.concat([intro, subBlock, data, terminator])
+    }
+
+    function buildAppExt (appId: string, payload: Buffer): Buffer {
+      const intro = Buffer.from([0x21, 0xFF])
+      const blockSize = Buffer.from([appId.length])
+      const id = Buffer.from(appId, 'ascii')
+      const subBlockLen = Buffer.alloc(1)
+      subBlockLen[0] = payload.length
+      const terminator = Buffer.from([0x00])
+      return Buffer.concat([intro, blockSize, id, subBlockLen, payload, terminator])
+    }
+
+    it('should detect GIF87a', async () => {
+      const buf = Buffer.alloc(13)
+      buf.write('GIF87a', 0, 6, 'ascii')
+      buf.writeUInt16LE(1, 6)
+      buf.writeUInt16LE(1, 8)
+      buf[10] = 0; buf[11] = 0; buf[12] = 0
+      const output = await scrubBuffer(buf)
+      assert.ok(output.subarray(0, 6).toString('ascii') === 'GIF87a')
+    })
+
+    it('should detect GIF89a', async () => {
+      const gif = buildGIF([])
+      const output = await scrubBuffer(gif)
+      assert.ok(output.subarray(0, 6).toString('ascii') === 'GIF89a')
+    })
+
+    it('should strip comment extension', async () => {
+      const comment = buildCommentExt('Secret comment here')
+      const gif = buildGIF([comment])
+      const output = await scrubBuffer(gif)
+      assert.ok(output.toString('ascii').indexOf('Secret comment') === -1, 'Comment should be stripped')
+      assert.ok(output[output.length - 1] === 0x3B, 'Should end with trailer')
+    })
+
+    it('should strip XMP application extension', async () => {
+      const xmpPayload = Buffer.from('<x:xmpmeta>secret XMP</x:xmpmeta>')
+      const xmpExt = buildAppExt('XMP DataXMP', xmpPayload)
+      const gif = buildGIF([xmpExt])
+      const output = await scrubBuffer(gif)
+      assert.ok(output.toString('ascii').indexOf('secret XMP') === -1, 'XMP should be stripped')
+    })
+
+    it('should preserve NETSCAPE2.0 extension', async () => {
+      const netscapePayload = Buffer.from([0x01, 0x00, 0x00]) // loop count
+      const netscapeExt = buildAppExt('NETSCAPE2.0', netscapePayload)
+      const gif = buildGIF([netscapeExt])
+      const output = await scrubBuffer(gif)
+      assert.ok(output.toString('ascii').indexOf('NETSCAPE2.0') !== -1, 'NETSCAPE2.0 should be preserved')
+    })
+
+    it('should preserve image data', async () => {
+      // Build a simple image descriptor block
+      const imgDesc = Buffer.alloc(10)
+      imgDesc[0] = 0x2C // image separator
+      imgDesc.writeUInt16LE(0, 1) // left
+      imgDesc.writeUInt16LE(0, 3) // top
+      imgDesc.writeUInt16LE(1, 5) // width
+      imgDesc.writeUInt16LE(1, 7) // height
+      imgDesc[9] = 0 // packed
+      const lzwMin = Buffer.from([0x02]) // LZW minimum code size
+      const imgData = Buffer.from([0x02, 0x44, 0x01, 0x00]) // sub-block(2 bytes) + terminator
+      const imageBlock = Buffer.concat([imgDesc, lzwMin, imgData])
+
+      const comment = buildCommentExt('Remove me')
+      const gif = buildGIF([comment, imageBlock])
+      const output = await scrubBuffer(gif)
+      assert.ok(output.toString('ascii').indexOf('Remove me') === -1, 'Comment stripped')
+      // Image separator should still be in the output
+      let hasImage = false
+      for (let i = 0; i < output.length; i++) {
+        if (output[i] === 0x2C) { hasImage = true; break }
+      }
+      assert.ok(hasImage, 'Image data should be preserved')
+    })
+
+    it('should strip mixed metadata keeping animation', async () => {
+      const comment = buildCommentExt('Author info')
+      const xmpPayload = Buffer.from('<xmp>data</xmp>')
+      const xmpExt = buildAppExt('XMP DataXMP', xmpPayload)
+      const netscapePayload = Buffer.from([0x01, 0x00, 0x00])
+      const netscapeExt = buildAppExt('NETSCAPE2.0', netscapePayload)
+
+      const gif = buildGIF([comment, xmpExt, netscapeExt])
+      const output = await scrubBuffer(gif)
+      assert.ok(output.toString('ascii').indexOf('Author info') === -1, 'Comment stripped')
+      assert.ok(output.toString('ascii').indexOf('<xmp>') === -1, 'XMP stripped')
+      assert.ok(output.toString('ascii').indexOf('NETSCAPE2.0') !== -1, 'NETSCAPE kept')
+    })
+
+    it('should handle GIF with no extensions', async () => {
+      const gif = buildGIF([])
+      const output = await scrubBuffer(gif)
+      assert.ok(output.length > 0)
+      assert.ok(output[output.length - 1] === 0x3B, 'Should end with trailer')
+    })
+
+    it('should handle truncated GIF', async () => {
+      const buf = Buffer.from('GIF89a', 'ascii')
+      const output = await scrubBuffer(buf)
+      assert.deepEqual(output, buf, 'Should pass through unchanged')
+    })
+
+    it('should strip comment from real GIF file (exiftool GIF.gif)', async () => {
+      const gifPath = 'exiftool-fixtures/t/images/GIF.gif'
+      if (!fs.existsSync(gifPath)) return // skip if fixture not available
+      const input = fs.readFileSync(gifPath)
+      const output = await scrubBuffer(input)
+      // Verify comment extension is gone
+      let hasComment = false
+      for (let i = 0; i < output.length - 1; i++) {
+        if (output[i] === 0x21 && output[i + 1] === 0xFE) { hasComment = true; break }
+      }
+      assert.ok(!hasComment, 'Comment extension should be stripped')
+      // Verify XMP is gone
+      assert.ok(output.toString('binary').indexOf('XMP DataXMP') === -1, 'XMP should be stripped')
+      // Verify it's still a valid GIF
+      assert.ok(output.subarray(0, 6).toString('ascii') === 'GIF89a' || output.subarray(0, 6).toString('ascii') === 'GIF87a')
+      assert.ok(output[output.length - 1] === 0x3B, 'Should end with trailer')
+    })
+
+    it('should strip XMP from real GIF file (photoshop GIF)', async () => {
+      const gifPath = 'metadata-extractor-images/gif/photoshop-8x12-32colors-alpha.gif'
+      if (!fs.existsSync(gifPath)) return
+      const input = fs.readFileSync(gifPath)
+      const output = await scrubBuffer(input)
+      assert.ok(output.toString('binary').indexOf('XMP DataXMP') === -1, 'XMP should be stripped')
+      assert.ok(output.subarray(0, 3).toString('ascii') === 'GIF')
+    })
+  })
 })
