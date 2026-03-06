@@ -843,4 +843,137 @@ describe('Exif be gone', () => {
       assert.ok(output.subarray(0, 3).toString('ascii') === 'GIF')
     })
   })
+
+  describe('JPEG segment stripping (APP13/APP2/APP12/COM)', () => {
+    function scrubBuffer (input: Buffer): Promise<Buffer> {
+      return new Promise((resolve, reject) => {
+        const writer = new streamBuffers.WritableStreamBuffer()
+        const readable = stream.Readable.from([input])
+        readable.pipe(new ExifBeGone()).pipe(writer)
+          .on('finish', () => resolve(writer.getContents()))
+          .on('error', reject)
+      })
+    }
+
+    function buildJpegSegment (markerByte: number, payload: Buffer): Buffer {
+      const marker = Buffer.from([0xFF, markerByte])
+      const length = Buffer.alloc(2)
+      length.writeUInt16BE(payload.length + 2, 0)
+      return Buffer.concat([marker, length, payload])
+    }
+
+    function buildJpeg (segments: Buffer[]): Buffer {
+      const soi = Buffer.from([0xFF, 0xD8])
+      const eoi = Buffer.from([0xFF, 0xD9])
+      return Buffer.concat([soi, ...segments, eoi])
+    }
+
+    it('should strip APP13 (IPTC) segment', async () => {
+      const iptcData = Buffer.from('Photoshop 3.0\x008BIM secret IPTC data')
+      const app13 = buildJpegSegment(0xED, iptcData)
+      const jpeg = buildJpeg([app13])
+      const output = await scrubBuffer(jpeg)
+      assert.ok(output.toString('binary').indexOf('secret IPTC') === -1, 'IPTC data should be stripped')
+      assert.ok(output[0] === 0xFF && output[1] === 0xD8, 'SOI preserved')
+    })
+
+    it('should strip COM (comment) segment', async () => {
+      const comment = Buffer.from('This is a secret comment')
+      const comSeg = buildJpegSegment(0xFE, comment)
+      const jpeg = buildJpeg([comSeg])
+      const output = await scrubBuffer(jpeg)
+      assert.ok(output.toString('binary').indexOf('secret comment') === -1, 'Comment should be stripped')
+    })
+
+    it('should strip APP12 (Ducky) segment', async () => {
+      const ducky = Buffer.from('Ducky quality data')
+      const app12 = buildJpegSegment(0xEC, ducky)
+      const jpeg = buildJpeg([app12])
+      const output = await scrubBuffer(jpeg)
+      assert.ok(output.toString('binary').indexOf('Ducky quality') === -1, 'Ducky data should be stripped')
+    })
+
+    it('should strip APP2 (FlashPix) but keep ICC_PROFILE', async () => {
+      const flashpix = Buffer.from('FlashPix data here')
+      const app2Flash = buildJpegSegment(0xE2, flashpix)
+
+      const iccData = Buffer.concat([Buffer.from('ICC_PROFILE'), Buffer.from([0x00, 0x01, 0x01]), Buffer.alloc(20, 0x42)])
+      const app2ICC = buildJpegSegment(0xE2, iccData)
+
+      const jpeg = buildJpeg([app2Flash, app2ICC])
+      const output = await scrubBuffer(jpeg)
+      assert.ok(output.toString('binary').indexOf('FlashPix') === -1, 'FlashPix should be stripped')
+      assert.ok(output.toString('binary').indexOf('ICC_PROFILE') !== -1, 'ICC_PROFILE should be preserved')
+    })
+
+    it('should strip XMP after ICC_PROFILE', async () => {
+      // ICC_PROFILE APP2 comes before XMP APP1 — must skip ICC and still strip XMP
+      const iccData = Buffer.concat([Buffer.from('ICC_PROFILE'), Buffer.from([0x00, 0x01, 0x01]), Buffer.alloc(20, 0x42)])
+      const app2ICC = buildJpegSegment(0xE2, iccData)
+      const xmpPayload = Buffer.concat([Buffer.from('http://ns.adobe.com/xap/1.0/\x00'), Buffer.from('<x:xmpmeta>secret GPS data</x:xmpmeta>')])
+      const app1XMP = buildJpegSegment(0xE1, xmpPayload)
+      const jpeg = buildJpeg([app2ICC, app1XMP])
+      const output = await scrubBuffer(jpeg)
+      assert.ok(output.toString('binary').indexOf('ICC_PROFILE') !== -1, 'ICC_PROFILE preserved')
+      assert.ok(output.toString('binary').indexOf('secret GPS') === -1, 'XMP after ICC should be stripped')
+    })
+
+    it('should strip multiple metadata segments', async () => {
+      const iptc = buildJpegSegment(0xED, Buffer.from('Photoshop 3.0\x00secret'))
+      const comment = buildJpegSegment(0xFE, Buffer.from('author info'))
+      const ducky = buildJpegSegment(0xEC, Buffer.from('ducky data'))
+      const jpeg = buildJpeg([iptc, comment, ducky])
+      const output = await scrubBuffer(jpeg)
+      assert.ok(output.toString('binary').indexOf('secret') === -1)
+      assert.ok(output.toString('binary').indexOf('author info') === -1)
+      assert.ok(output.toString('binary').indexOf('ducky data') === -1)
+    })
+
+    it('should preserve non-metadata segments (DQT, SOF, DHT)', async () => {
+      // Build segments with non-metadata markers
+      const dqt = buildJpegSegment(0xDB, Buffer.alloc(64, 0x10)) // DQT
+      const sof = buildJpegSegment(0xC0, Buffer.alloc(11, 0x20))  // SOF0
+      const dht = buildJpegSegment(0xC4, Buffer.alloc(16, 0x30)) // DHT
+      const jpeg = buildJpeg([dqt, sof, dht])
+      const output = await scrubBuffer(jpeg)
+      // All segments should be preserved
+      assert.ok(output.length === jpeg.length, 'No segments should be removed')
+    })
+
+    it('should strip IPTC from real IPTC.jpg', async () => {
+      const iptcPath = 'exiftool-fixtures/t/images/IPTC.jpg'
+      if (!fs.existsSync(iptcPath)) return
+      const input = fs.readFileSync(iptcPath)
+      const output = await scrubBuffer(input)
+      // Check that APP13 markers are gone
+      let hasApp13 = false
+      for (let i = 0; i < output.length - 1; i++) {
+        if (output[i] === 0xFF && output[i + 1] === 0xED) { hasApp13 = true; break }
+      }
+      assert.ok(!hasApp13, 'APP13 should be stripped')
+      assert.ok(output[0] === 0xFF && output[1] === 0xD8, 'Still a valid JPEG')
+    })
+
+    it('should strip metadata from real PhotoMechanic.jpg', async () => {
+      const pmPath = 'exiftool-fixtures/t/images/PhotoMechanic.jpg'
+      if (!fs.existsSync(pmPath)) return
+      const input = fs.readFileSync(pmPath)
+      const output = await scrubBuffer(input)
+      // Check that Exif and IPTC markers are gone
+      let hasApp1Exif = false
+      let hasApp13 = false
+      for (let i = 0; i < output.length - 1; i++) {
+        if (output[i] === 0xFF && output[i + 1] === 0xE1) {
+          // Check if it's Exif or XMP
+          if (i + 10 < output.length) {
+            const payload = output.subarray(i + 4, i + 10)
+            if (payload.toString('binary').startsWith('Exif')) hasApp1Exif = true
+          }
+        }
+        if (output[i] === 0xFF && output[i + 1] === 0xED) hasApp13 = true
+      }
+      assert.ok(!hasApp1Exif, 'Exif APP1 should be stripped')
+      assert.ok(!hasApp13, 'APP13 should be stripped')
+    })
+  })
 })

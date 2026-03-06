@@ -26,7 +26,6 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
 Object.defineProperty(exports, "__esModule", { value: true });
 var stream_1 = require("stream");
 var zlib_1 = require("zlib");
-var app1Marker = Buffer.from('ffe1', 'hex');
 var pdfMarker = Buffer.from('%PDF-', 'utf-8');
 var pdfInfoKeys = ['/Title', '/Author', '/Subject', '/Keywords', '/Creator', '/Producer', '/CreationDate', '/ModDate'];
 var exifMarker = Buffer.from('457869660000', 'hex'); // Exif\0\0
@@ -35,7 +34,10 @@ var webp1Marker = Buffer.from('52494646', 'hex'); // RIFF
 var webp2Marker = Buffer.from('57454250', 'hex'); // WEBP
 var xmpMarker = Buffer.from('http://ns.adobe.com/xap', 'utf-8');
 var flirMarker = Buffer.from('FLIR', 'utf-8');
+var iccProfileMarker = Buffer.from('ICC_PROFILE', 'utf-8');
 var maxMarkerLength = Math.max(exifMarker.length, xmpMarker.length, flirMarker.length);
+// JPEG markers to always strip (APP13/IPTC, APP12/Ducky, COM/comments)
+var jpegAlwaysStripMarkers = new Set([0xED, 0xEC, 0xFE]);
 // TIFF
 var tiffLE = Buffer.from('49492a00', 'hex'); // II*\0
 var tiffBE = Buffer.from('4d4d002a', 'hex'); // MM\0*
@@ -175,24 +177,32 @@ var ExifTransformer = /** @class */ (function (_super) {
             default: throw new Error('unknown mode');
         }
     };
-    ExifTransformer.prototype._scrubOther = function (atEnd, chunk) {
-        var pendingChunk = chunk ? Buffer.concat(__spreadArray(__spreadArray([], this.pending, true), [chunk], false)) : Buffer.concat(this.pending);
-        // currently haven't detected an app1 marker
-        if (this.remainingScrubBytes === undefined) {
-            var app1Start = pendingChunk.indexOf(app1Marker);
-            // no app1 in the current pendingChunk
-            if (app1Start === -1) {
-                // if last byte is ff, wait for more
-                if (!atEnd && pendingChunk[pendingChunk.length - 1] === app1Marker[0]) {
-                    if (chunk)
-                        this.pending.push(chunk);
-                    return;
+    ExifTransformer.prototype._findJpegMetadataMarker = function (buf, startFrom) {
+        if (startFrom === void 0) { startFrom = 0; }
+        for (var i = startFrom; i < buf.length - 1; i++) {
+            if (buf[i] === 0xFF) {
+                var next = buf[i + 1];
+                if (next === 0xE1 || next === 0xE2 || next === 0xEC || next === 0xED || next === 0xFE) {
+                    return i;
                 }
             }
-            else {
-                // there is an app1, but not enough data to read to exif marker
-                // so defer
-                if (app1Start + maxMarkerLength + 4 > pendingChunk.length) {
+        }
+        return -1;
+    };
+    ExifTransformer.prototype._scrubOther = function (atEnd, chunk) {
+        var pendingChunk = chunk ? Buffer.concat(__spreadArray(__spreadArray([], this.pending, true), [chunk], false)) : Buffer.concat(this.pending);
+        // currently haven't detected a metadata marker
+        if (this.remainingScrubBytes === undefined) {
+            var searchFrom = 0;
+            var markerStart = -1;
+            var foundStrippable = false;
+            while (true) {
+                markerStart = this._findJpegMetadataMarker(pendingChunk, searchFrom);
+                if (markerStart === -1)
+                    break;
+                var markerByte = pendingChunk[markerStart + 1];
+                // Need at least 4 bytes from marker start to read the length
+                if (markerStart + 4 > pendingChunk.length) {
                     if (atEnd) {
                         this.push(pendingChunk);
                         this.pending.length = 0;
@@ -201,20 +211,75 @@ var ExifTransformer = /** @class */ (function (_super) {
                         this.pending.push(chunk);
                     }
                     return;
-                    // we have enough, so lets read the length
                 }
-                else {
-                    var candidateMarker = Uint8Array.prototype.slice.call(pendingChunk, app1Start + 4, app1Start + maxMarkerLength + 4);
-                    if (exifMarker.compare(candidateMarker, 0, exifMarker.length) === 0 || xmpMarker.compare(candidateMarker, 0, xmpMarker.length) === 0 || flirMarker.compare(candidateMarker, 0, flirMarker.length) === 0) {
-                        // we add 2 to the remainingScrubBytes to account for the app1 marker
-                        this.remainingScrubBytes = pendingChunk.readUInt16BE(app1Start + 2) + 2;
-                        this.push(Uint8Array.prototype.slice.call(pendingChunk, 0, app1Start));
-                        pendingChunk = Buffer.from(Uint8Array.prototype.slice.call(pendingChunk, app1Start));
+                // APP13 (IPTC), APP12 (Ducky), COM (comments) — always strip
+                if (jpegAlwaysStripMarkers.has(markerByte)) {
+                    this.remainingScrubBytes = pendingChunk.readUInt16BE(markerStart + 2) + 2;
+                    this.push(Uint8Array.prototype.slice.call(pendingChunk, 0, markerStart));
+                    pendingChunk = Buffer.from(Uint8Array.prototype.slice.call(pendingChunk, markerStart));
+                    foundStrippable = true;
+                    break;
+                    // APP1 — strip if Exif, XMP, or FLIR
+                }
+                else if (markerByte === 0xE1) {
+                    if (markerStart + maxMarkerLength + 4 > pendingChunk.length) {
+                        if (atEnd) {
+                            this.push(pendingChunk);
+                            this.pending.length = 0;
+                        }
+                        else if (chunk) {
+                            this.pending.push(chunk);
+                        }
+                        return;
                     }
+                    var candidateMarker = Uint8Array.prototype.slice.call(pendingChunk, markerStart + 4, markerStart + maxMarkerLength + 4);
+                    if (exifMarker.compare(candidateMarker, 0, exifMarker.length) === 0 || xmpMarker.compare(candidateMarker, 0, xmpMarker.length) === 0 || flirMarker.compare(candidateMarker, 0, flirMarker.length) === 0) {
+                        this.remainingScrubBytes = pendingChunk.readUInt16BE(markerStart + 2) + 2;
+                        this.push(Uint8Array.prototype.slice.call(pendingChunk, 0, markerStart));
+                        pendingChunk = Buffer.from(Uint8Array.prototype.slice.call(pendingChunk, markerStart));
+                        foundStrippable = true;
+                        break;
+                    }
+                    // Not Exif/XMP/FLIR — skip past this APP1 segment
+                    var segEnd = markerStart + 2 + pendingChunk.readUInt16BE(markerStart + 2);
+                    searchFrom = segEnd < pendingChunk.length ? segEnd : pendingChunk.length;
+                    // APP2 — strip unless ICC_PROFILE
+                }
+                else if (markerByte === 0xE2) {
+                    if (markerStart + 4 + iccProfileMarker.length > pendingChunk.length) {
+                        if (atEnd) {
+                            this.push(pendingChunk);
+                            this.pending.length = 0;
+                        }
+                        else if (chunk) {
+                            this.pending.push(chunk);
+                        }
+                        return;
+                    }
+                    var app2Payload = Uint8Array.prototype.slice.call(pendingChunk, markerStart + 4, markerStart + 4 + iccProfileMarker.length);
+                    if (iccProfileMarker.compare(app2Payload, 0, iccProfileMarker.length) !== 0) {
+                        this.remainingScrubBytes = pendingChunk.readUInt16BE(markerStart + 2) + 2;
+                        this.push(Uint8Array.prototype.slice.call(pendingChunk, 0, markerStart));
+                        pendingChunk = Buffer.from(Uint8Array.prototype.slice.call(pendingChunk, markerStart));
+                        foundStrippable = true;
+                        break;
+                    }
+                    // ICC_PROFILE — skip past this APP2 segment
+                    var segEnd = markerStart + 2 + pendingChunk.readUInt16BE(markerStart + 2);
+                    searchFrom = segEnd < pendingChunk.length ? segEnd : pendingChunk.length;
+                }
+            }
+            // no strippable marker found
+            if (!foundStrippable && markerStart === -1) {
+                // if last byte is ff, wait for more
+                if (!atEnd && pendingChunk.length > 0 && pendingChunk[pendingChunk.length - 1] === 0xFF) {
+                    if (chunk)
+                        this.pending.push(chunk);
+                    return;
                 }
             }
         }
-        // we have successfully read an app1/exif marker, so we can remove data
+        // we have successfully found a metadata marker, so we can remove data
         if (this.remainingScrubBytes !== undefined && this.remainingScrubBytes !== 0) {
             // there is more data than we want to remove, so we only remove up to remainingScrubBytes
             if (pendingChunk.length >= this.remainingScrubBytes) {

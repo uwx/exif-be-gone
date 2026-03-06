@@ -1159,4 +1159,216 @@ describe('Exif be gone', function () {
             });
         }); });
     });
+    describe('JPEG segment stripping (APP13/APP2/APP12/COM)', function () {
+        function scrubBuffer(input) {
+            return new Promise(function (resolve, reject) {
+                var writer = new streamBuffers.WritableStreamBuffer();
+                var readable = stream.Readable.from([input]);
+                readable.pipe(new ExifBeGone()).pipe(writer)
+                    .on('finish', function () { return resolve(writer.getContents()); })
+                    .on('error', reject);
+            });
+        }
+        function buildJpegSegment(markerByte, payload) {
+            var marker = Buffer.from([0xFF, markerByte]);
+            var length = Buffer.alloc(2);
+            length.writeUInt16BE(payload.length + 2, 0);
+            return Buffer.concat([marker, length, payload]);
+        }
+        function buildJpeg(segments) {
+            var soi = Buffer.from([0xFF, 0xD8]);
+            var eoi = Buffer.from([0xFF, 0xD9]);
+            return Buffer.concat(__spreadArray(__spreadArray([soi], segments, true), [eoi], false));
+        }
+        it('should strip APP13 (IPTC) segment', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var iptcData, app13, jpeg, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        iptcData = Buffer.from('Photoshop 3.0\x008BIM secret IPTC data');
+                        app13 = buildJpegSegment(0xED, iptcData);
+                        jpeg = buildJpeg([app13]);
+                        return [4 /*yield*/, scrubBuffer(jpeg)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(output.toString('binary').indexOf('secret IPTC') === -1, 'IPTC data should be stripped');
+                        assert.ok(output[0] === 0xFF && output[1] === 0xD8, 'SOI preserved');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should strip COM (comment) segment', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var comment, comSeg, jpeg, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        comment = Buffer.from('This is a secret comment');
+                        comSeg = buildJpegSegment(0xFE, comment);
+                        jpeg = buildJpeg([comSeg]);
+                        return [4 /*yield*/, scrubBuffer(jpeg)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(output.toString('binary').indexOf('secret comment') === -1, 'Comment should be stripped');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should strip APP12 (Ducky) segment', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var ducky, app12, jpeg, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        ducky = Buffer.from('Ducky quality data');
+                        app12 = buildJpegSegment(0xEC, ducky);
+                        jpeg = buildJpeg([app12]);
+                        return [4 /*yield*/, scrubBuffer(jpeg)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(output.toString('binary').indexOf('Ducky quality') === -1, 'Ducky data should be stripped');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should strip APP2 (FlashPix) but keep ICC_PROFILE', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var flashpix, app2Flash, iccData, app2ICC, jpeg, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        flashpix = Buffer.from('FlashPix data here');
+                        app2Flash = buildJpegSegment(0xE2, flashpix);
+                        iccData = Buffer.concat([Buffer.from('ICC_PROFILE'), Buffer.from([0x00, 0x01, 0x01]), Buffer.alloc(20, 0x42)]);
+                        app2ICC = buildJpegSegment(0xE2, iccData);
+                        jpeg = buildJpeg([app2Flash, app2ICC]);
+                        return [4 /*yield*/, scrubBuffer(jpeg)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(output.toString('binary').indexOf('FlashPix') === -1, 'FlashPix should be stripped');
+                        assert.ok(output.toString('binary').indexOf('ICC_PROFILE') !== -1, 'ICC_PROFILE should be preserved');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should strip XMP after ICC_PROFILE', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var iccData, app2ICC, xmpPayload, app1XMP, jpeg, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        iccData = Buffer.concat([Buffer.from('ICC_PROFILE'), Buffer.from([0x00, 0x01, 0x01]), Buffer.alloc(20, 0x42)]);
+                        app2ICC = buildJpegSegment(0xE2, iccData);
+                        xmpPayload = Buffer.concat([Buffer.from('http://ns.adobe.com/xap/1.0/\x00'), Buffer.from('<x:xmpmeta>secret GPS data</x:xmpmeta>')]);
+                        app1XMP = buildJpegSegment(0xE1, xmpPayload);
+                        jpeg = buildJpeg([app2ICC, app1XMP]);
+                        return [4 /*yield*/, scrubBuffer(jpeg)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(output.toString('binary').indexOf('ICC_PROFILE') !== -1, 'ICC_PROFILE preserved');
+                        assert.ok(output.toString('binary').indexOf('secret GPS') === -1, 'XMP after ICC should be stripped');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should strip multiple metadata segments', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var iptc, comment, ducky, jpeg, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        iptc = buildJpegSegment(0xED, Buffer.from('Photoshop 3.0\x00secret'));
+                        comment = buildJpegSegment(0xFE, Buffer.from('author info'));
+                        ducky = buildJpegSegment(0xEC, Buffer.from('ducky data'));
+                        jpeg = buildJpeg([iptc, comment, ducky]);
+                        return [4 /*yield*/, scrubBuffer(jpeg)];
+                    case 1:
+                        output = _a.sent();
+                        assert.ok(output.toString('binary').indexOf('secret') === -1);
+                        assert.ok(output.toString('binary').indexOf('author info') === -1);
+                        assert.ok(output.toString('binary').indexOf('ducky data') === -1);
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should preserve non-metadata segments (DQT, SOF, DHT)', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var dqt, sof, dht, jpeg, output;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        dqt = buildJpegSegment(0xDB, Buffer.alloc(64, 0x10)) // DQT
+                        ;
+                        sof = buildJpegSegment(0xC0, Buffer.alloc(11, 0x20)) // SOF0
+                        ;
+                        dht = buildJpegSegment(0xC4, Buffer.alloc(16, 0x30)) // DHT
+                        ;
+                        jpeg = buildJpeg([dqt, sof, dht]);
+                        return [4 /*yield*/, scrubBuffer(jpeg)
+                            // All segments should be preserved
+                        ];
+                    case 1:
+                        output = _a.sent();
+                        // All segments should be preserved
+                        assert.ok(output.length === jpeg.length, 'No segments should be removed');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should strip IPTC from real IPTC.jpg', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var iptcPath, input, output, hasApp13, i;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        iptcPath = 'exiftool-fixtures/t/images/IPTC.jpg';
+                        if (!fs.existsSync(iptcPath))
+                            return [2 /*return*/];
+                        input = fs.readFileSync(iptcPath);
+                        return [4 /*yield*/, scrubBuffer(input)
+                            // Check that APP13 markers are gone
+                        ];
+                    case 1:
+                        output = _a.sent();
+                        hasApp13 = false;
+                        for (i = 0; i < output.length - 1; i++) {
+                            if (output[i] === 0xFF && output[i + 1] === 0xED) {
+                                hasApp13 = true;
+                                break;
+                            }
+                        }
+                        assert.ok(!hasApp13, 'APP13 should be stripped');
+                        assert.ok(output[0] === 0xFF && output[1] === 0xD8, 'Still a valid JPEG');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+        it('should strip metadata from real PhotoMechanic.jpg', function () { return __awaiter(void 0, void 0, void 0, function () {
+            var pmPath, input, output, hasApp1Exif, hasApp13, i, payload;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        pmPath = 'exiftool-fixtures/t/images/PhotoMechanic.jpg';
+                        if (!fs.existsSync(pmPath))
+                            return [2 /*return*/];
+                        input = fs.readFileSync(pmPath);
+                        return [4 /*yield*/, scrubBuffer(input)
+                            // Check that Exif and IPTC markers are gone
+                        ];
+                    case 1:
+                        output = _a.sent();
+                        hasApp1Exif = false;
+                        hasApp13 = false;
+                        for (i = 0; i < output.length - 1; i++) {
+                            if (output[i] === 0xFF && output[i + 1] === 0xE1) {
+                                // Check if it's Exif or XMP
+                                if (i + 10 < output.length) {
+                                    payload = output.subarray(i + 4, i + 10);
+                                    if (payload.toString('binary').startsWith('Exif'))
+                                        hasApp1Exif = true;
+                                }
+                            }
+                            if (output[i] === 0xFF && output[i + 1] === 0xED)
+                                hasApp13 = true;
+                        }
+                        assert.ok(!hasApp1Exif, 'Exif APP1 should be stripped');
+                        assert.ok(!hasApp13, 'APP13 should be stripped');
+                        return [2 /*return*/];
+                }
+            });
+        }); });
+    });
 });

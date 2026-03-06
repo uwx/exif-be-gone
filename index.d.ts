@@ -27,6 +27,7 @@ declare class ExifTransformer extends Transform {
     _transform(chunk: any, _: BufferEncoding, callback: TransformCallback): void;
     _final(callback: TransformCallback): void;
     _scrub(atEnd: Boolean, chunk?: Buffer): void;
+    _findJpegMetadataMarker(buf: Buffer, startFrom?: number): number;
     _scrubOther(atEnd: Boolean, chunk?: Buffer): void;
     _scrubPNG(atEnd: Boolean, chunk?: Buffer): void;
     _processPNGGood(chunk: Buffer): Buffer;
