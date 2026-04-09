@@ -169,13 +169,19 @@ function copy(src: Uint8Array, dest: Uint8Array, destOffset: number) {
 	dest.set(src, destOffset);
 }
 
-function compare(a: Uint8Array, b: Uint8Array, aStart = 0, aEnd = a.length): number {
-	for (let i = aStart, j = 0; i < aEnd && j < b.length; i++, j++) {
-		if (a[i] !== b[j]) {
-			return a[i] - b[j];
+function compare(a: Uint8Array, b: Uint8Array, bStart = 0, bEnd = b.length, aStart = 0, aEnd = a.length): number {
+	// Compares a with b and returns a number indicating whether a comes before, after, or is the same as b in sort order. Comparison is based on the actual sequence of bytes in each Buffer.
+	const aLen = aEnd - aStart;
+	const bLen = bEnd - bStart;
+	const minLen = Math.min(aLen, bLen);
+	for (let i = 0; i < minLen; i++) {
+		const aByte = a[aStart + i];
+		const bByte = b[bStart + i];
+		if (aByte !== bByte) {
+			return aByte < bByte ? -1 : 1;
 		}
 	}
-	return (aEnd - aStart) - b.length;
+	if (aLen === bLen) return 0;
 }
 
 function toLatin1(buf: Uint8Array): string {
