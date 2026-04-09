@@ -1,62 +1,68 @@
 {
-  "name": "exif-be-gone",
-  "version": "1.6.0",
-  "description": "Remove EXIF data from your files.",
-  "main": "index.js",
-  "bin": {
-    "exif-be-gone": "cli.js"
-  },
-  "types": "index.d.ts",
-  "scripts": {
-    "build": "tsc -p . && chmod 755 cli.js",
-    "test": "npm run build && mocha -R spec spec/*.spec.js",
-    "test:samples": "npm run build && ./scripts/test.sh",
-    "lint": "standardx *.ts **/*.ts",
-    "lint:fix": "standardx *.ts **/*.ts --fix"
-  },
-  "author": "Josh Hull",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/joshbuddy/exif-be-gone.git"
-  },
-  "license": "ISC",
-  "devDependencies": {
-    "@types/chai": "^4.2.12",
-    "@types/mocha": "^8.0.2",
-    "@types/node": "^18.6.3",
-    "@types/stream-buffers": "^3.0.3",
-    "@typescript-eslint/eslint-plugin": "^3.9.0",
-    "@typescript-eslint/parser": "^3.9.0",
-    "buffer-to-stream": "1.0.0",
-    "chai": "4.2.0",
-    "mocha": "8.1.1",
-    "standardx": "^7.0.0",
-    "stream-buffers": "^3.0.2",
-    "typescript": "^4.7.4",
-    "typescript-eslint": "0.0.1-alpha.0"
-  },
-  "eslintConfig": {
-    "ignorePatterns": [
-      "**/*.d.ts"
-    ],
-    "rules": {
-      "no-unused-vars": "off",
-      "@typescript-eslint/no-unused-vars": "error"
-    }
-  },
-  "standardx": {
-    "parser": "@typescript-eslint/parser",
-    "plugins": [
-      "@typescript-eslint/eslint-plugin"
-    ]
-  },
-  "files": [
-    "README.md",
-    "index.ts",
-    "index.d.ts",
-    "index.d.ts.map",
-    "index.js",
-    "tsconfig.json",
-    "cli.js"
-  ]
+	"name": "exif-be-gone",
+	"type": "module",
+	"version": "1.6.0",
+	"description": "Remove EXIF data from your files.",
+	"main": "index.js",
+	"bin": {
+		"exif-be-gone": "cli.js"
+	},
+	"types": "index.d.ts",
+	"scripts": {
+		"build": "tsc -p . && chmod 755 cli.js",
+		"test": "vitest run",
+		"test:samples": "npm run build && ./scripts/test.sh",
+		"lint": "standardx *.ts **/*.ts",
+		"lint:fix": "standardx *.ts **/*.ts --fix"
+	},
+	"author": "Josh Hull",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/joshbuddy/exif-be-gone.git"
+	},
+	"license": "ISC",
+	"devDependencies": {
+		"@types/node": "^25.5.2",
+		"@types/stream-buffers": "^3.0.8",
+		"@typescript-eslint/eslint-plugin": "^8.58.1",
+		"@typescript-eslint/parser": "^8.58.1",
+		"@uswriting/exiftool": "^1.0.9",
+		"buffer-to-stream": "1.0.0",
+		"eslint": "^10.2.0",
+		"standardx": "^7.0.0",
+		"stream-buffers": "^3.0.3",
+		"typescript": "^6.0.2",
+		"typescript-eslint": "8.58.1",
+		"vitest": "^4.1.4"
+	},
+	"eslintConfig": {
+		"ignorePatterns": [
+			"**/*.d.ts"
+		],
+		"rules": {
+			"no-unused-vars": "off",
+			"@typescript-eslint/no-unused-vars": "error"
+		}
+	},
+	"standardx": {
+		"parser": "@typescript-eslint/parser",
+		"plugins": [
+			"@typescript-eslint/eslint-plugin"
+		]
+	},
+	"files": [
+		"README.md",
+		"index.ts",
+		"index.d.ts",
+		"index.d.ts.map",
+		"index.js",
+		"tsconfig.json",
+		"cli.js"
+	],
+	"dependencies": {
+		"exiftool-vendored": "^35.15.1",
+		"fflate": "^0.8.2",
+		"globby": "^16.2.0",
+		"hex-encoding": "^2.0.3"
+	}
 }

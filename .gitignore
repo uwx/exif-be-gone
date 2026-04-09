@@ -3,9 +3,4 @@
 /tsconfig.tsbuildinfo
 /scrubbed-out
 /scrubbed-out.*
-/exif-samples
-/metadata-extractor-images
-/exifr-fixtures
-/imagemeta-fixtures
-/pypdf-samples
-/exiftool-fixtures
+/out

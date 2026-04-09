@@ -1,0 +1,18 @@
+[submodule "exif-samples"]
+	path = exif-samples
+	url = https://github.com/ianare/exif-samples.git
+[submodule "exifr-fixtures"]
+	path = exifr-fixtures
+	url = https://github.com/MikeKovarik/exifr
+[submodule "exiftool-fixtures"]
+	path = exiftool-fixtures
+	url = https://github.com/exiftool/exiftool
+[submodule "imagemeta-fixtures"]
+	path = imagemeta-fixtures
+	url = https://github.com/bep/imagemeta.git
+[submodule "metadata-extractor-images"]
+	path = metadata-extractor-images
+	url = https://github.com/drewnoakes/metadata-extractor-images.git
+[submodule "pypdf-samples"]
+	path = pypdf-samples
+	url = https://github.com/py-pdf/sample-files.git
