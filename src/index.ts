@@ -182,6 +182,7 @@ function compare(a: Uint8Array, b: Uint8Array, bStart = 0, bEnd = b.length, aSta
 		}
 	}
 	if (aLen === bLen) return 0;
+	return aLen < bLen ? -1 : 1;
 }
 
 function toLatin1(buf: Uint8Array): string {
@@ -318,7 +319,7 @@ class ExifTransformer extends Transform {
 				chunk.length >= 12 &&
 				arraysEqual(ftypMarker, chunk.subarray(4, 8))
 			) {
-				const brand = chunk.subarray(8, 12).toString();
+				const brand = toUtf8(chunk.subarray(8, 12));
 				if (isobmffBrands.includes(brand)) {
 					this.mode = "isobmff";
 				} else {
@@ -470,8 +471,7 @@ class ExifTransformer extends Transform {
 						}
 						return;
 					}
-					const candidateMarker = Uint8Array.prototype.slice.call(
-						pendingChunk,
+					const candidateMarker = pendingChunk.subarray(
 						markerStart + 4,
 						markerStart + maxMarkerLength + 4,
 					);
@@ -507,8 +507,7 @@ class ExifTransformer extends Transform {
 						}
 						return;
 					}
-					const app2Payload = Uint8Array.prototype.slice.call(
-						pendingChunk,
+					const app2Payload = pendingChunk.subarray(
 						markerStart + 4,
 						markerStart + 4 + iccProfileMarker.length,
 					);
@@ -561,10 +560,7 @@ class ExifTransformer extends Transform {
 			// there is more data than we want to remove, so we only remove up to remainingScrubBytes
 			if (pendingChunk.length >= this.remainingScrubBytes) {
 				const remainingBuffer = newUint8Array(
-					Uint8Array.prototype.slice.call(
-						pendingChunk,
-						this.remainingScrubBytes,
-					),
+					pendingChunk.subarray(this.remainingScrubBytes),
 				);
 				this.pending = remainingBuffer.length !== 0 ? [remainingBuffer] : [];
 				this.remainingScrubBytes = undefined;
@@ -591,8 +587,7 @@ class ExifTransformer extends Transform {
 			if (this.remainingScrubBytes !== undefined) {
 				if (pendingChunk.length >= this.remainingScrubBytes) {
 					const remainingBuffer = newUint8Array(
-						Uint8Array.prototype.slice.call(
-							pendingChunk,
+						pendingChunk.subarray(
 							this.remainingScrubBytes,
 						),
 					);
@@ -618,9 +613,7 @@ class ExifTransformer extends Transform {
 			}
 
 			const size = readUInt32BE(pendingChunk, 0);
-			const chunkType = Uint8Array.prototype.slice
-				.call(pendingChunk, 4, 8)
-				.toString();
+			const chunkType = toUtf8(pendingChunk.subarray(4, 8));
 			switch (chunkType) {
 				case "tIME":
 				case "iTXt":
@@ -756,12 +749,7 @@ class ExifTransformer extends Transform {
 			pendingChunk = this._processPNGGood(pendingChunk);
 			if (this.remainingScrubBytes !== undefined) {
 				if (pendingChunk.length >= this.remainingScrubBytes) {
-					const remainingBuffer = newUint8Array(
-						Uint8Array.prototype.slice.call(
-							pendingChunk,
-							this.remainingScrubBytes,
-						),
-					);
+					const remainingBuffer = newUint8Array(pendingChunk.subarray(this.remainingScrubBytes));
 					this.pending = remainingBuffer.length !== 0 ? [remainingBuffer] : [];
 					this.remainingScrubBytes = undefined;
 					// this chunk is too large, remove everything
@@ -783,9 +771,7 @@ class ExifTransformer extends Transform {
 				return;
 			}
 
-			const chunkType = Uint8Array.prototype.slice
-				.call(pendingChunk, 0, 4)
-				.toString();
+			const chunkType = toUtf8(pendingChunk.subarray(0, 4));
 			const size = readUInt32LE(pendingChunk, 4);
 			const chunkTotal = 8 + size + (size % 2); // header + data + RIFF padding
 			switch (chunkType) {

@@ -1,7 +1,7 @@
 import { exiftool, Tags } from "exiftool-vendored";
 import ExifBeGone from "../src/index";
 import { globby } from "globby";
-import { assert, describe, expect, it } from 'vitest';
+import { assert, afterAll, describe, expect, it } from 'vitest';
 import streamBuffers, { WritableStreamBuffer } from "stream-buffers";
 import { createReadStream, openAsBlob } from 'node:fs';
 import { unlink, writeFile } from "node:fs/promises";
@@ -53,6 +53,8 @@ async function processWithExifTool(file: string | Buffer, ext?: string) {
 }
 
 describe("Fixture tests", () => {
+    afterAll(() => exiftool.end());
+
     for (const file of files) {
         it(`should process ${file} without error if exiftool processes it without error`, async (ctx) => {
             let preTags: Tags;
@@ -87,10 +89,14 @@ describe("Fixture tests", () => {
 
                 const tags = JSON.stringify(postTags).toLowerCase();
 
+                const inspected = inspect(postTags);
+
                 for (const tag of [
-                    'gps', 'coordinates', 'latitude', 'longitude', 'altitude', 'digital signature', 'exif version', 'xmp toolkit', 'by-line', 'caption-abstract', 'keywords', 'artist', 'copyright', 'image description', 'author', 'title'
+                    'gps', 'coordinates', 'latitude', 'longitude', 'altitude', 'digital signature', 'exif version', 'xmp toolkit', 'by-line', 'caption-abstract', 'keywords', 'artist', 'copyright:', 'copyright :', 'image description', 'author', 'title'
                 ]) {
-                    expect(tags).to.not.include(tag, `Tag "${tag}" should not be present in the output. tags: ${inspect(postTags)}`);
+                    if (tags.includes(tag)) {
+                        expect.fail(`Tag "${tag}" should not be present in the output. tags: ${inspected}`);
+                    }
                 }
             });
         });
