@@ -130,7 +130,7 @@ function readUInt16BE(buf: Uint8Array, offset: number): number {
 }
 
 function readUInt32BE(buf: Uint8Array, offset: number): number {
-	return ((buf[offset] << 24) + ((buf[offset + 1] << 16) | (buf[offset + 2] << 8) | buf[offset + 3]));
+	return (((buf[offset] << 24) + ((buf[offset + 1] << 16) | (buf[offset + 2] << 8) | buf[offset + 3])) >>> 0);
 }
 
 function readUInt16LE(buf: Uint8Array, offset: number): number {
@@ -138,7 +138,7 @@ function readUInt16LE(buf: Uint8Array, offset: number): number {
 }
 
 function readUInt32LE(buf: Uint8Array, offset: number): number {
-	return (buf[offset] + (buf[offset + 1] << 8) + (buf[offset + 2] << 16) + (buf[offset + 3] << 24));
+	return ((buf[offset] + (buf[offset + 1] << 8) + (buf[offset + 2] << 16) + (buf[offset + 3] << 24)) >>> 0);
 }
 
 function writeUInt16BE(buf: Uint8Array, value: number, offset: number) {
@@ -613,6 +613,13 @@ class ExifTransformer extends Transform {
 			}
 
 			const size = readUInt32BE(pendingChunk, 0);
+			const chunkTotal = size + 12;
+			// Corrupt chunk: size exceeds available data — pass through the rest
+			if (chunkTotal > pendingChunk.length) {
+				this.push(pendingChunk);
+				this.pending.length = 0;
+				return;
+			}
 			const chunkType = toUtf8(pendingChunk.subarray(4, 8));
 			switch (chunkType) {
 				case "tIME":
@@ -621,10 +628,10 @@ class ExifTransformer extends Transform {
 				case "zTXt":
 				case "eXIf":
 				case "dSIG":
-					this.remainingScrubBytes = size + 12;
+					this.remainingScrubBytes = chunkTotal;
 					continue;
 				default:
-					this.remainingGoodBytes = size + 12;
+					this.remainingGoodBytes = chunkTotal;
 					continue;
 			}
 		}
@@ -774,6 +781,12 @@ class ExifTransformer extends Transform {
 			const chunkType = toUtf8(pendingChunk.subarray(0, 4));
 			const size = readUInt32LE(pendingChunk, 4);
 			const chunkTotal = 8 + size + (size % 2); // header + data + RIFF padding
+			// Corrupt chunk: size exceeds available data — pass through the rest
+			if (chunkTotal > pendingChunk.length) {
+				this.push(pendingChunk);
+				this.pending.length = 0;
+				return;
+			}
 			switch (chunkType) {
 				case "EXIF":
 				case "XMP ":
