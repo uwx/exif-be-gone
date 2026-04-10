@@ -1,13 +1,13 @@
 {
 	"name": "@uwx/exif-be-gone-web",
 	"type": "module",
-	"version": "1.6.2",
+	"version": "1.6.3",
 	"description": "Remove EXIF data from your files.",
 	"main": "out/index.js",
 	"bin": {
 		"exif-be-gone": "cli.js"
 	},
-	"types": "index.d.ts",
+	"types": "out/index.d.ts",
 	"scripts": {
 		"build": "tsc -p . && chmod 755 cli.js",
 		"test": "vitest run"
