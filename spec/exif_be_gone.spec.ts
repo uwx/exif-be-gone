@@ -106,8 +106,8 @@ describe("Exif be gone", () => {
 			]);
 			const output = await processPDF(pdf);
 			const text = output.toString("binary");
-			assert.ok(text.indexOf("/Title ()") !== -1, "Title should be emptied");
-			assert.ok(text.indexOf("/Author ()") !== -1, "Author should be emptied");
+			assert.ok(text.indexOf("/Title") === -1, "Title key should be removed");
+			assert.ok(text.indexOf("/Author") === -1, "Author key should be removed");
 			assert.ok(
 				text.indexOf("My Secret Title") === -1,
 				"Title content should be removed",
@@ -126,8 +126,8 @@ describe("Exif be gone", () => {
 			const output = await processPDF(pdf);
 			const text = output.toString("binary");
 			assert.ok(
-				text.indexOf("/Producer <>") !== -1,
-				"Producer hex should be emptied",
+				text.indexOf("/Producer") === -1,
+				"Producer key should be removed",
 			);
 		});
 
@@ -190,8 +190,8 @@ describe("Exif be gone", () => {
 			});
 			const text = output.toString("binary");
 			assert.ok(
-				text.indexOf("/Title ()") !== -1,
-				"Title should be emptied even with chunked input",
+				text.indexOf("/Title") === -1,
+				"Title key should be removed even with chunked input",
 			);
 			assert.ok(text.indexOf("Secret") === -1, "Secret should be removed");
 		});
