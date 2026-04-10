@@ -68,7 +68,7 @@ describe("Fixture tests", () => {
 
             return new Promise<WritableStreamBuffer>((resolve, reject) => {
                 const writer = new streamBuffers.WritableStreamBuffer();
-                Readable.toWeb(createReadStream(file))
+                (Readable.toWeb(createReadStream(file)) as ReadableStream)
                     .pipeThrough(new ExifBeGone())
                     .pipeTo(Writable.toWeb(writer))
                     .then(() => {

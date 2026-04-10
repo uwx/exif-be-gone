@@ -9,7 +9,7 @@ describe("Exif be gone", () => {
 		it("should strip data", () => {
 			return new Promise<void>((resolve, reject) => {
 				const writer = new streamBuffers.WritableStreamBuffer();
-				stream.Readable.toWeb(fs.createReadStream("Canon_40D.jpg"))
+				(stream.Readable.toWeb(fs.createReadStream("Canon_40D.jpg")) as ReadableStream)
 					.pipeThrough(new ExifBeGone())
 					.pipeTo(stream.Writable.toWeb(writer))
 					.then(() => {
@@ -35,7 +35,7 @@ describe("Exif be gone", () => {
 					Buffer.from("08090a0b0c0d0e0f", "hex"),
 					Buffer.from("0001020304050607", "hex"),
 					Buffer.from("08090a0b0c0d0e0f", "hex"),
-				]));
+				])) as ReadableStream;
 				readable
 					.pipeThrough(new ExifBeGone())
 					.pipeTo(stream.Writable.toWeb(writer))
@@ -78,7 +78,7 @@ describe("Exif be gone", () => {
 		function processPDF(input: Buffer): Promise<Buffer> {
 			return new Promise((resolve, reject) => {
 				const writer = new streamBuffers.WritableStreamBuffer();
-				const readable = stream.Readable.toWeb(stream.Readable.from([input]));
+				const readable = stream.Readable.toWeb(stream.Readable.from([input])) as ReadableStream;
 				readable
 					.pipeThrough(new ExifBeGone())
 					.pipeTo(stream.Writable.toWeb(writer))
@@ -181,7 +181,7 @@ describe("Exif be gone", () => {
 			}
 			const output: Buffer = await new Promise((resolve, reject) => {
 				const writer = new streamBuffers.WritableStreamBuffer();
-				const readable = stream.Readable.toWeb(stream.Readable.from(chunks));
+				const readable = stream.Readable.toWeb(stream.Readable.from(chunks)) as ReadableStream;
 				readable
 					.pipeThrough(new ExifBeGone())
 					.pipeTo(stream.Writable.toWeb(writer))
@@ -247,7 +247,7 @@ describe("Exif be gone", () => {
 		function processBuffer(input: Buffer): Promise<Buffer> {
 			return new Promise((resolve, reject) => {
 				const writer = new streamBuffers.WritableStreamBuffer();
-				const readable = stream.Readable.toWeb(stream.Readable.from(input));
+				const readable = stream.Readable.toWeb(stream.Readable.from(input)) as ReadableStream;
 				readable
 					.pipeThrough(new ExifBeGone())
 					.pipeTo(stream.Writable.toWeb(writer))
@@ -624,7 +624,7 @@ describe("Exif be gone", () => {
 		function processBuffer(input: Buffer): Promise<Buffer> {
 			return new Promise((resolve, reject) => {
 				const writer = new streamBuffers.WritableStreamBuffer();
-				const readable = stream.Readable.toWeb(stream.Readable.from([input]));
+				const readable = stream.Readable.toWeb(stream.Readable.from([input])) as ReadableStream;
 				readable
 					.pipeThrough(new ExifBeGone())
 					.pipeTo(stream.Writable.toWeb(writer))
@@ -902,7 +902,7 @@ describe("Exif be gone", () => {
 		function scrubBuffer(input: Buffer): Promise<Buffer> {
 			return new Promise((resolve, reject) => {
 				const writer = new streamBuffers.WritableStreamBuffer();
-				const readable = stream.Readable.toWeb(stream.Readable.from([input]));
+				const readable = stream.Readable.toWeb(stream.Readable.from([input])) as ReadableStream;
 				readable
 					.pipeThrough(new ExifBeGone())
 					.pipeTo(stream.Writable.toWeb(writer))
@@ -1115,7 +1115,7 @@ describe("Exif be gone", () => {
 		function scrubBuffer(input: Buffer): Promise<Buffer> {
 			return new Promise((resolve, reject) => {
 				const writer = new streamBuffers.WritableStreamBuffer();
-				const readable = stream.Readable.toWeb(stream.Readable.from([input]));
+				const readable = stream.Readable.toWeb(stream.Readable.from([input])) as ReadableStream;
 				readable
 					.pipeThrough(new ExifBeGone())
 					.pipeTo(stream.Writable.toWeb(writer))
