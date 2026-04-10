@@ -1,7 +1,7 @@
 {
 	"name": "@uwx/exif-be-gone-web",
 	"type": "module",
-	"version": "1.6.0",
+	"version": "1.6.1",
 	"description": "Remove EXIF data from your files.",
 	"main": "out/index.js",
 	"bin": {
