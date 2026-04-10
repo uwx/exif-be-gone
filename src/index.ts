@@ -107,6 +107,10 @@ const tiffTypeSizes: Record<number, number> = {
 type PdfStreamType = "metadata" | "image" | "embedded" | "xref" | "pass";
 
 function arraysEqual(a: Uint8Array, b: Uint8Array) {
+	if (typeof indexedDB !== "undefined" && indexedDB && typeof indexedDB.cmp === "function") {
+		return indexedDB.cmp(a, b) === 0;
+	}
+
 	if (a.length !== b.length) return false;
 	for (let i = 0; i < a.length; i++) {
 		if (a[i] !== b[i]) return false;
@@ -170,6 +174,10 @@ function copy(src: Uint8Array, dest: Uint8Array, destOffset: number) {
 }
 
 function compare(a: Uint8Array, b: Uint8Array, bStart = 0, bEnd = b.length, aStart = 0, aEnd = a.length): number {
+	if (typeof indexedDB !== "undefined" && indexedDB && typeof indexedDB.cmp === "function") {
+		return indexedDB.cmp(a.subarray(aStart, aEnd), b.subarray(bStart, bEnd));
+	}
+
 	// Compares a with b and returns a number indicating whether a comes before, after, or is the same as b in sort order. Comparison is based on the actual sequence of bytes in each Buffer.
 	const aLen = aEnd - aStart;
 	const bLen = bEnd - bStart;
