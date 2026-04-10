@@ -1,5 +1,5 @@
 {
-	"name": "exif-be-gone",
+	"name": "@uwx/exif-be-gone-web",
 	"type": "module",
 	"version": "1.6.0",
 	"description": "Remove EXIF data from your files.",
@@ -18,7 +18,7 @@
 	"author": "Josh Hull",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/joshbuddy/exif-be-gone.git"
+		"url": "git+https://github.com/uwx/exif-be-gone.git"
 	},
 	"license": "ISC",
 	"devDependencies": {
