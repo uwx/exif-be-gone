@@ -1,7 +1,7 @@
 {
 	"name": "@uwx/exif-be-gone-web",
 	"type": "module",
-	"version": "1.6.3",
+	"version": "1.6.4",
 	"description": "Remove EXIF data from your files.",
 	"main": "out/index.js",
 	"bin": {
@@ -48,11 +48,9 @@
 		]
 	},
 	"files": [
+		"LICENSE",
 		"README.md",
-		"index.ts",
-		"index.d.ts",
-		"index.d.ts.map",
-		"index.js",
+		"out/**/*",
 		"tsconfig.json",
 		"cli.js"
 	],
