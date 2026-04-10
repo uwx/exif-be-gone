@@ -622,10 +622,14 @@ class ExifTransformer extends Transform {
 
 			const size = readUInt32BE(pendingChunk, 0);
 			const chunkTotal = size + 12;
-			// Corrupt chunk: size exceeds available data — pass through the rest
+			// Chunk size exceeds available data — buffer for more unless at end
 			if (chunkTotal > pendingChunk.length) {
-				this.push(pendingChunk);
-				this.pending.length = 0;
+				if (atEnd) {
+					this.push(pendingChunk);
+					this.pending.length = 0;
+				} else {
+					this.pending = [pendingChunk];
+				}
 				return;
 			}
 			const chunkType = toUtf8(pendingChunk.subarray(4, 8));
@@ -789,10 +793,14 @@ class ExifTransformer extends Transform {
 			const chunkType = toUtf8(pendingChunk.subarray(0, 4));
 			const size = readUInt32LE(pendingChunk, 4);
 			const chunkTotal = 8 + size + (size % 2); // header + data + RIFF padding
-			// Corrupt chunk: size exceeds available data — pass through the rest
+			// Chunk size exceeds available data — buffer for more unless at end
 			if (chunkTotal > pendingChunk.length) {
-				this.push(pendingChunk);
-				this.pending.length = 0;
+				if (atEnd) {
+					this.push(pendingChunk);
+					this.pending.length = 0;
+				} else {
+					this.pending = [pendingChunk];
+				}
 				return;
 			}
 			switch (chunkType) {
