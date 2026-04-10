@@ -8,9 +8,6 @@ importers:
 
   .:
     dependencies:
-      exiftool-vendored:
-        specifier: ^35.15.1
-        version: 35.15.1
       fflate:
         specifier: ^0.8.2
         version: 0.8.2
@@ -42,6 +39,9 @@ importers:
       eslint:
         specifier: ^10.2.0
         version: 10.2.0
+      exiftool-vendored:
+        specifier: ^35.15.1
+        version: 35.15.1
       stream-buffers:
         specifier: ^3.0.3
         version: 3.0.3

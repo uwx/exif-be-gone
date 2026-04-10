@@ -1,7 +1,7 @@
 {
 	"name": "@uwx/exif-be-gone-web",
 	"type": "module",
-	"version": "1.6.1",
+	"version": "1.6.2",
 	"description": "Remove EXIF data from your files.",
 	"main": "out/index.js",
 	"bin": {
@@ -26,6 +26,7 @@
 		"@uswriting/exiftool": "^1.0.9",
 		"buffer-to-stream": "1.0.0",
 		"eslint": "^10.2.0",
+		"exiftool-vendored": "^35.15.1",
 		"stream-buffers": "^3.0.3",
 		"typescript": "^6.0.2",
 		"typescript-eslint": "8.58.1",
@@ -56,7 +57,6 @@
 		"cli.js"
 	],
 	"dependencies": {
-		"exiftool-vendored": "^35.15.1",
 		"fflate": "^0.8.2",
 		"globby": "^16.2.0",
 		"hex-encoding": "^2.0.3"
