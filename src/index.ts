@@ -398,7 +398,7 @@ class ExifTransformer extends Transform {
 		callback();
 	}
 
-	_scrub(atEnd: boolean, chunk?: Uint8Array) {
+	private _scrub(atEnd: boolean, chunk?: Uint8Array) {
 		switch (this.mode) {
 			case "other":
 				return this._scrubOther(atEnd, chunk);
@@ -411,7 +411,7 @@ class ExifTransformer extends Transform {
 		}
 	}
 
-	_findJpegMetadataMarker(buf: Uint8Array, startFrom = 0): number {
+	private _findJpegMetadataMarker(buf: Uint8Array, startFrom = 0): number {
 		for (let i = startFrom; i < buf.length - 1; i++) {
 			if (buf[i] === 0xff) {
 				const next = buf[i + 1];
@@ -429,7 +429,7 @@ class ExifTransformer extends Transform {
 		return -1;
 	}
 
-	_scrubOther(atEnd: boolean, chunk?: Uint8Array) {
+	private _scrubOther(atEnd: boolean, chunk?: Uint8Array) {
 		let pendingChunk = chunk
 			? concat([...this.pending, chunk])
 			: concat(this.pending);
@@ -549,7 +549,7 @@ class ExifTransformer extends Transform {
 		}
 	}
 
-	_scrubPNG(atEnd: Boolean, chunk?: Uint8Array) {
+	private _scrubPNG(atEnd: Boolean, chunk?: Uint8Array) {
 		let pendingChunk = chunk
 			? concat([...this.pending, chunk])
 			: concat(this.pending);
@@ -613,7 +613,7 @@ class ExifTransformer extends Transform {
 		}
 	}
 
-	_processPNGGood(chunk: Uint8Array): Uint8Array {
+	private _processPNGGood(chunk: Uint8Array): Uint8Array {
 		if (this.remainingGoodBytes === undefined) {
 			return chunk;
 		}
@@ -635,14 +635,14 @@ class ExifTransformer extends Transform {
 		}
 	}
 
-	_gifSkipSubBlocks(buf: Uint8Array, pos: number): number {
+	private _gifSkipSubBlocks(buf: Uint8Array, pos: number): number {
 		while (pos < buf.length && buf[pos] !== 0) {
 			pos += buf[pos] + 1;
 		}
 		return pos < buf.length ? pos + 1 : pos;
 	}
 
-	_scrubGIF(buf: Uint8Array): Uint8Array {
+	private _scrubGIF(buf: Uint8Array): Uint8Array {
 		if (buf.length < 13) return buf;
 
 		const parts: Uint8Array[] = [];
@@ -723,7 +723,7 @@ class ExifTransformer extends Transform {
 		return concat(parts);
 	}
 
-	_scrubWEBP(atEnd: Boolean, chunk?: Uint8Array) {
+	private _scrubWEBP(atEnd: Boolean, chunk?: Uint8Array) {
 		let pendingChunk = chunk
 			? concat([...this.pending, chunk])
 			: concat(this.pending);
@@ -779,7 +779,7 @@ class ExifTransformer extends Transform {
 		}
 	}
 	// TIFF scrubbing
-	_scrubTIFF(buf: Uint8Array): Uint8Array {
+	private _scrubTIFF(buf: Uint8Array): Uint8Array {
 		if (buf.length < 8) return buf;
 		const out = newUint8Array(buf);
 		const le = out[0] === 0x49; // 'I' = little-endian
@@ -875,7 +875,7 @@ class ExifTransformer extends Transform {
 		return out;
 	}
 
-	_tiffZeroSubIFD(
+	private _tiffZeroSubIFD(
 		buf: Uint8Array,
 		offset: number,
 		readU16: (b: Uint8Array, o: number) => number,
@@ -921,7 +921,7 @@ class ExifTransformer extends Transform {
 	}
 
 	// ISOBMFF scrubbing (HEIC/AVIF/JXL)
-	_scrubISOBMFF(buf: Uint8Array): Uint8Array {
+	private _scrubISOBMFF(buf: Uint8Array): Uint8Array {
 		if (buf.length < 12) return buf;
 		const out = newUint8Array(buf);
 
@@ -1036,7 +1036,7 @@ class ExifTransformer extends Transform {
 		return out;
 	}
 
-	_isobmffParseBoxes(
+	private _isobmffParseBoxes(
 		buf: Uint8Array,
 		start: number,
 		end: number,
@@ -1075,7 +1075,7 @@ class ExifTransformer extends Transform {
 		return boxes;
 	}
 
-	_isobmffReadUintBE(buf: Uint8Array, offset: number, byteCount: number): number {
+	private _isobmffReadUintBE(buf: Uint8Array, offset: number, byteCount: number): number {
 		let val = 0;
 		for (let i = 0; i < byteCount; i++) {
 			val = val * 256 + buf[offset + i];
@@ -1083,7 +1083,7 @@ class ExifTransformer extends Transform {
 		return val;
 	}
 
-	_isobmffParseIinf(
+	private _isobmffParseIinf(
 		buf: Uint8Array,
 		dataOffset: number,
 		boxEnd: number,
@@ -1145,7 +1145,7 @@ class ExifTransformer extends Transform {
 		return items;
 	}
 
-	_isobmffParseIloc(
+	private _isobmffParseIloc(
 		buf: Uint8Array,
 		dataOffset: number,
 		boxEnd: number,
@@ -1234,18 +1234,18 @@ class ExifTransformer extends Transform {
 	}
 
 	// PDF offset tracking helpers
-	_pdfPush(data: Uint8Array): void {
+	private _pdfPush(data: Uint8Array): void {
 		this.push(data);
 		this.pdfInputOffset += data.length;
 		this.pdfOutputOffset += data.length;
 	}
 
-	_pdfSkip(n: number): void {
+	private _pdfSkip(n: number): void {
 		this.pdfInputOffset += n;
 		this.pdfOffsetMap.push([this.pdfInputOffset, this.pdfOutputOffset]);
 	}
 
-	_pdfPushModified(origLen: number, newData: Uint8Array): void {
+	private _pdfPushModified(origLen: number, newData: Uint8Array): void {
 		this.push(newData);
 		this.pdfInputOffset += origLen;
 		this.pdfOutputOffset += newData.length;
@@ -1254,7 +1254,7 @@ class ExifTransformer extends Transform {
 		}
 	}
 
-	_pdfComputeOffset(origOffset: number): number {
+	private _pdfComputeOffset(origOffset: number): number {
 		let lastInput = 0;
 		let lastOutput = 0;
 		for (const [inp, out] of this.pdfOffsetMap) {
@@ -1269,7 +1269,7 @@ class ExifTransformer extends Transform {
 	}
 
 	// Process embedded image/file through a new ExifTransformer
-	_pdfProcessEmbedded(data: Uint8Array): Uint8Array {
+	private _pdfProcessEmbedded(data: Uint8Array): Uint8Array {
 		const chunks: Uint8Array[] = [];
 		const sub = new class extends ExifTransformer {
 			push(chunk: Uint8Array) {
@@ -1284,7 +1284,7 @@ class ExifTransformer extends Transform {
 	}
 
 	// Scrub Info dictionary keys - remove key-value pairs entirely
-	_pdfScrubInfoDict(dictText: string): string {
+	private _pdfScrubInfoDict(dictText: string): string {
 		let result = dictText;
 		for (const key of pdfInfoKeys) {
 			const keyIdx = result.indexOf(key);
@@ -1337,12 +1337,12 @@ class ExifTransformer extends Transform {
 	}
 
 	// Update /Length value in dictionary text
-	_pdfUpdateLength(dictText: string, newLength: number): string {
+	private _pdfUpdateLength(dictText: string, newLength: number): string {
 		return dictText.replace(/\/Length\s+\d+/, "/Length " + newLength);
 	}
 
 	// Main PDF scrubbing state machine
-	_scrubPDF(_atEnd: boolean, chunk?: Uint8Array): void {
+	private _scrubPDF(_atEnd: boolean, chunk?: Uint8Array): void {
 		if (chunk) {
 			this.pdfPending =
 				this.pdfPending.length > 0
@@ -1562,7 +1562,7 @@ class ExifTransformer extends Transform {
 	}
 
 	// Handle completed dictionary
-	_pdfHandleDict(buf: Uint8Array, pos: number): void {
+	private _pdfHandleDict(buf: Uint8Array, pos: number): void {
 		const dictText = toLatin1(this.pdfDictBuffer);
 		const dictLen = this.pdfDictBuffer.length;
 
@@ -1657,12 +1657,12 @@ class ExifTransformer extends Transform {
 		this.pdfPending = remaining.slice(afterKeyword);
 	}
 
-	_pdfStoredDictText: string = "";
-	_pdfStoredDictOrigLen: number = 0;
-	_pdfStoredStreamHeader: Uint8Array = new Uint8Array();
-	_pdfStoredStreamHeaderInputLen: number = 0;
+	private _pdfStoredDictText: string = "";
+	private _pdfStoredDictOrigLen: number = 0;
+	private _pdfStoredStreamHeader: Uint8Array = new Uint8Array();
+	private _pdfStoredStreamHeaderInputLen: number = 0;
 
-	_pdfFindStreamKeyword(buf: Uint8Array): number {
+	private _pdfFindStreamKeyword(buf: Uint8Array): number {
 		// Look for 'stream' not preceded by 'end'
 		let idx = 0;
 		while (idx < buf.length) {
@@ -1694,7 +1694,7 @@ class ExifTransformer extends Transform {
 		return -1;
 	}
 
-	_pdfStreamKeywordEnd(buf: Uint8Array, streamStart: number): number {
+	private _pdfStreamKeywordEnd(buf: Uint8Array, streamStart: number): number {
 		// stream keyword is followed by \r\n or \n
 		const afterStream = streamStart + 6; // length of 'stream'
 		if (afterStream >= buf.length) return -1;
@@ -1709,14 +1709,14 @@ class ExifTransformer extends Transform {
 	}
 
 	// Handle stream content
-	_pdfHandleStream(buf: Uint8Array, pos: number, _atEnd: boolean): number {
+	private _pdfHandleStream(buf: Uint8Array, pos: number, _atEnd: boolean): number {
 		if (this.pdfStreamType === "pass") {
 			return this._pdfHandlePassStream(buf, pos, _atEnd);
 		}
 		return this._pdfHandleModifiedStream(buf, pos, _atEnd);
 	}
 
-	_pdfHandlePassStream(buf: Uint8Array, pos: number, _atEnd: boolean): number {
+	private _pdfHandlePassStream(buf: Uint8Array, pos: number, _atEnd: boolean): number {
 		if (this.pdfStreamLength >= 0) {
 			const remaining = this.pdfStreamLength - this.pdfStreamBytesRead;
 			const available = buf.length - pos;
@@ -1760,7 +1760,7 @@ class ExifTransformer extends Transform {
 		return buf.length;
 	}
 
-	_pdfHandleModifiedStream(buf: Uint8Array, pos: number, _atEnd: boolean): number {
+	private _pdfHandleModifiedStream(buf: Uint8Array, pos: number, _atEnd: boolean): number {
 		if (this.pdfStreamLength >= 0) {
 			const remaining = this.pdfStreamLength - this.pdfStreamBytesRead;
 			const available = buf.length - pos;
@@ -1804,7 +1804,7 @@ class ExifTransformer extends Transform {
 		return buf.length;
 	}
 
-	_pdfFinishModifiedStream(): void {
+	private _pdfFinishModifiedStream(): void {
 		const streamContent = concat(this.pdfStreamData);
 		const origStreamLen = streamContent.length;
 		let newContent: Uint8Array;
@@ -1865,7 +1865,7 @@ class ExifTransformer extends Transform {
 	}
 
 	// Process traditional xref block
-	_pdfProcessXrefBlock(block: Uint8Array): Uint8Array {
+	private _pdfProcessXrefBlock(block: Uint8Array): Uint8Array {
 		const text = toLatin1(block);
 		const lines = text.split(/\r?\n|\r/);
 		const result: string[] = [];
@@ -1937,7 +1937,7 @@ class ExifTransformer extends Transform {
 	}
 
 	// Process cross-reference stream
-	_pdfProcessXrefStream(streamContent: Uint8Array, dictText: string): Uint8Array {
+	private _pdfProcessXrefStream(streamContent: Uint8Array, dictText: string): Uint8Array {
 		// Extract /W array for field widths
 		const wMatch = dictText.match(/\/W\s*\[(\d+)\s+(\d+)\s+(\d+)\]/);
 		if (!wMatch) return streamContent;
