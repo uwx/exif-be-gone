@@ -1,6 +1,9 @@
-# Exif be gone
+# Exif be gone (Web port)
 
 Zero dependency stream transformer to remove data that could be potentially private.
+
+This is a port of the upstream library by [Joshua Hull](https://github.com/joshbuddy/exif-be-gone) to work in web and
+React Native environments. It uses roughly the same API and supports the same formats as the original library.
 
 ### Supported formats
 
@@ -16,18 +19,18 @@ Zero dependency stream transformer to remove data that could be potentially priv
 
 ## Installation
 
-Use `npm install exif-be-gone` to install this package.
-
+Use `npm install @uwx/exif-be-gone-web` to install this package.
+    
 ## Example usage
 
 ```javascript
-const ExifTransformer = require('exif-be-gone')
+const ExifTransformer = require('@uwx/exif-be-gone-web')
 const fs = require("fs")
 
 const reader = fs.createReadStream('Canon_40D.jpg')
 const writer = fs.createWriteStream('out.jpg')
 
-reader.pipe(new ExifTransformer()).pipe(writer)
+Reader.toWeb(reader).pipeThrough(new ExifTransformer()).pipeTo(Writer.toWeb(writer))
 ```
 
 There is also a command-line version that is installed that can be run via:
