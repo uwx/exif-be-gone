@@ -415,11 +415,11 @@ class ExifTransformer extends Transform {
 		for (let i = startFrom; i < buf.length - 1; i++) {
 			if (buf[i] === 0xff) {
 				const next = buf[i + 1];
+				// Strip APP1-APP13 (0xE1-0xED), APP15 (0xEF), COM (0xFE)
+				// Keep APP0 (0xE0, JFIF) and APP14 (0xEE, Adobe color)
 				if (
-					next === 0xe1 ||
-					next === 0xe2 ||
-					next === 0xec ||
-					next === 0xed ||
+					(next >= 0xe1 && next <= 0xed) ||
+					next === 0xef ||
 					next === 0xfe
 				) {
 					return i;
@@ -456,56 +456,8 @@ class ExifTransformer extends Transform {
 					return;
 				}
 
-				// APP13 (IPTC), APP12 (Ducky), COM (comments) — always strip
-				if (jpegAlwaysStripMarkers.has(markerByte)) {
-					this.remainingScrubBytes =
-						readUInt16BE(pendingChunk, markerStart + 2) + 2;
-					this.push(
-						pendingChunk.subarray(0, markerStart),
-					);
-					pendingChunk = newUint8Array(
-						pendingChunk.subarray(markerStart),
-					);
-					foundStrippable = true;
-					break;
-					// APP1 — strip if Exif, XMP, or FLIR
-				} else if (markerByte === 0xe1) {
-					if (markerStart + maxMarkerLength + 4 > pendingChunk.length) {
-						if (atEnd) {
-							this.push(pendingChunk);
-							this.pending.length = 0;
-						} else if (chunk) {
-							this.pending.push(chunk);
-						}
-						return;
-					}
-					const candidateMarker = pendingChunk.subarray(
-						markerStart + 4,
-						markerStart + maxMarkerLength + 4,
-					);
-					if (
-						compare(exifMarker, candidateMarker, 0, exifMarker.length) === 0 ||
-						compare(xmpMarker, candidateMarker, 0, xmpMarker.length) === 0 ||
-						compare(flirMarker, candidateMarker, 0, flirMarker.length) === 0
-					) {
-						this.remainingScrubBytes =
-							readUInt16BE(pendingChunk, markerStart + 2) + 2;
-						this.push(
-							pendingChunk.subarray(0, markerStart),
-						);
-						pendingChunk = newUint8Array(
-							pendingChunk.subarray(markerStart),
-						);
-						foundStrippable = true;
-						break;
-					}
-					// Not Exif/XMP/FLIR — skip past this APP1 segment
-					const segEnd =
-						markerStart + 2 + readUInt16BE(pendingChunk, markerStart + 2);
-					searchFrom =
-						segEnd < pendingChunk.length ? segEnd : pendingChunk.length;
-					// APP2 — strip unless ICC_PROFILE
-				} else if (markerByte === 0xe2) {
+				// APP2 — strip unless ICC_PROFILE
+				if (markerByte === 0xe2) {
 					if (markerStart + 4 + iccProfileMarker.length > pendingChunk.length) {
 						if (atEnd) {
 							this.push(pendingChunk);
@@ -543,6 +495,18 @@ class ExifTransformer extends Transform {
 						markerStart + 2 + readUInt16BE(pendingChunk, markerStart + 2);
 					searchFrom =
 						segEnd < pendingChunk.length ? segEnd : pendingChunk.length;
+				// All other metadata markers — always strip
+				} else {
+					this.remainingScrubBytes =
+						readUInt16BE(pendingChunk, markerStart + 2) + 2;
+					this.push(
+						pendingChunk.subarray(0, markerStart),
+					);
+					pendingChunk = newUint8Array(
+						pendingChunk.subarray(markerStart),
+					);
+					foundStrippable = true;
+					break;
 				}
 			}
 
