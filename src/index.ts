@@ -2043,3 +2043,32 @@ export default class ExifTransformerWeb extends TransformStream<Uint8Array | Pro
 		});
 	}
 }
+
+export async function transformExif(input: Uint8Array | ReadableStream<Uint8Array>): Promise<Uint8Array> {
+	if (input instanceof Uint8Array) {
+		const inputArr = input;
+		input = new ReadableStream({
+			start(controller) {
+				controller.enqueue(inputArr);
+				controller.close();
+			},
+		});
+	}
+
+	const outputStream = input.pipeThrough(new ExifTransformerWeb());
+	const reader = outputStream.getReader();
+	try {
+		const chunks: Uint8Array[] = [];
+		let done = false;
+		while (!done) {
+			const { value, done: streamDone } = await reader.read();
+			if (value) {
+				chunks.push(value);
+			}
+			done = streamDone;
+		}
+		return concat(chunks);
+	} finally {
+		reader.releaseLock();
+	}
+}

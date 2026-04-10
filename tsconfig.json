@@ -18,7 +18,7 @@
 		// "outFile": "./",                       /* Concatenate and emit output to single file. */
 		"outDir": "./out" /* Redirect output structure to the directory. */,
 		"rootDir": "./" /* Specify the root directory of input files. Use to control the output directory structure with --outDir. */,
-		"composite": true /* Enable project compilation */,
+		"composite": false /* Enable project compilation */,
 		// "tsBuildInfoFile": "./",               /* Specify file to store incremental compilation information */
 		// "removeComments": true,                /* Do not emit comments to output. */
 		"noEmit": false /* Do not emit outputs. */,
@@ -67,9 +67,8 @@
 		/* Advanced Options */
 		"resolveJsonModule": true /* Include modules imported with '.json' extension */,
 		"skipLibCheck": true /* Skip type checking of declaration files. */,
-		"forceConsistentCasingInFileNames": true /* Disallow inconsistently-cased references to the same file. */,
-		"types": ["mocha"]
+		"forceConsistentCasingInFileNames": true /* Disallow inconsistently-cased references to the same file. */
 	},
-	"include": ["cli.js", "./src", "./spec"],
+	"include": ["./src/**/*.ts", "./spec/**/*.ts"],
 	"exclude": ["node_modules", "out"]
 }

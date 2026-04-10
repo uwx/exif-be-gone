@@ -3,17 +3,14 @@
 	"type": "module",
 	"version": "1.6.0",
 	"description": "Remove EXIF data from your files.",
-	"main": "index.js",
+	"main": "out/index.js",
 	"bin": {
 		"exif-be-gone": "cli.js"
 	},
 	"types": "index.d.ts",
 	"scripts": {
 		"build": "tsc -p . && chmod 755 cli.js",
-		"test": "vitest run",
-		"test:samples": "npm run build && ./scripts/test.sh",
-		"lint": "standardx *.ts **/*.ts",
-		"lint:fix": "standardx *.ts **/*.ts --fix"
+		"test": "vitest run"
 	},
 	"author": "Josh Hull",
 	"repository": {
@@ -29,7 +26,6 @@
 		"@uswriting/exiftool": "^1.0.9",
 		"buffer-to-stream": "1.0.0",
 		"eslint": "^10.2.0",
-		"standardx": "^7.0.0",
 		"stream-buffers": "^3.0.3",
 		"typescript": "^6.0.2",
 		"typescript-eslint": "8.58.1",
