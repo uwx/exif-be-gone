@@ -1311,12 +1311,10 @@ class ExifTransformer extends Transform {
 		return concat(chunks);
 	}
 
-	// Scrub Info dictionary keys - replace values with empty
+	// Scrub Info dictionary keys - remove key-value pairs entirely
 	_pdfScrubInfoDict(dictText: string): string {
 		let result = dictText;
 		for (const key of pdfInfoKeys) {
-			// Match key followed by a parenthesized string value: /Key (value)
-			// Handle nested parens and escapes
 			const keyIdx = result.indexOf(key);
 			if (keyIdx === -1) continue;
 			const afterKey = keyIdx + key.length;
@@ -1327,12 +1325,15 @@ class ExifTransformer extends Transform {
 				(result[i] === " " || result[i] === "\n" || result[i] === "\r")
 			)
 				i++;
-			if (i >= result.length) continue;
+			if (i >= result.length) {
+				// Key at end with no value — remove just the key
+				result = result.substring(0, keyIdx) + result.substring(i);
+				continue;
+			}
 			if (result[i] === "(") {
 				// Find matching close paren
 				let depth = 0;
 				let escaped = false;
-				const start = i;
 				for (; i < result.length; i++) {
 					if (escaped) {
 						escaped = false;
@@ -1351,14 +1352,12 @@ class ExifTransformer extends Transform {
 						}
 					}
 				}
-				result = result.substring(0, start) + "()" + result.substring(i);
+				result = result.substring(0, keyIdx) + result.substring(i);
 			} else if (result[i] === "<") {
 				// Hex string
-				const start = i;
 				const end = result.indexOf(">", i);
 				if (end !== -1) {
-					result =
-						result.substring(0, start) + "<>" + result.substring(end + 1);
+					result = result.substring(0, keyIdx) + result.substring(end + 1);
 				}
 			}
 		}
