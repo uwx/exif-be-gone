@@ -104,7 +104,7 @@ const tiffTypeSizes: Record<number, number> = {
 	12: 8,
 };
 
-type PdfStreamType = "metadata" | "image" | "embedded" | "xref" | "pass";
+type PdfStreamType = "metadata" | "image" | "embedded" | "xref" | "check" | "pass";
 
 function arraysEqual(a: Uint8Array, b: Uint8Array) {
 	if (typeof indexedDB !== "undefined" && indexedDB && typeof indexedDB.cmp === "function") {
@@ -1582,6 +1582,10 @@ class ExifTransformer extends Transform {
 			streamType = "embedded";
 		} else if (/\/Type\s*\/XRef/.test(dictText)) {
 			streamType = "xref";
+		} else if (!/\/Type\b/.test(dictText) && !/\/Subtype\b/.test(dictText)) {
+			// Unclassified stream with no Type/Subtype — buffer and check for
+			// application-specific data like Photoshop 8BIM resources
+			streamType = "check";
 		}
 
 		// Extract /Length
@@ -1818,6 +1822,19 @@ class ExifTransformer extends Transform {
 				streamContent,
 				this._pdfStoredDictText,
 			);
+		} else if (this.pdfStreamType === "check") {
+			// Check for Photoshop 8BIM resource data
+			if (
+				streamContent.length >= 4 &&
+				streamContent[0] === 0x38 && // '8'
+				streamContent[1] === 0x42 && // 'B'
+				streamContent[2] === 0x49 && // 'I'
+				streamContent[3] === 0x4d    // 'M'
+			) {
+				newContent = new Uint8Array();
+			} else {
+				newContent = streamContent;
+			}
 		} else {
 			newContent = streamContent;
 		}
