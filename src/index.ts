@@ -1,6 +1,6 @@
 import type { TransformCallback } from "stream";
 import { inflateSync, deflateSync } from "fflate";
-import Hex from 'hex-encoding';
+import Hex from './hex-encoding/index';
 
 const textEncoder = new TextEncoder();
 function newUint8Array(input: string | Uint8Array, encoding?: 'utf-8' | "hex" | 'ascii' | 'binary' | 'latin1'): Uint8Array {

@@ -11,12 +11,9 @@ importers:
       fflate:
         specifier: ^0.8.2
         version: 0.8.2
-      globby:
-        specifier: ^16.2.0
-        version: 16.2.0
-      hex-encoding:
-        specifier: ^2.0.3
-        version: 2.0.3
+      uint8-encoding:
+        specifier: ^2.0.1
+        version: 2.0.1
     devDependencies:
       '@types/node':
         specifier: ^25.5.2
@@ -42,6 +39,9 @@ importers:
       exiftool-vendored:
         specifier: ^35.15.1
         version: 35.15.1
+      globby:
+        specifier: ^16.2.0
+        version: 16.2.0
       stream-buffers:
         specifier: ^3.0.3
         version: 3.0.3
@@ -566,9 +566,6 @@ packages:
     resolution: {integrity: sha512-F/1DnUGPopORZi0ni+CvrCgHQ5FyEAHRLSApuYWMmrbSwoN2Mn/7k+Gl38gJnR7yyDZk6WLXwiGod1JOWNDKGw==}
     hasBin: true
 
-  hex-encoding@2.0.3:
-    resolution: {integrity: sha512-sSmMo4ij2Vejht+5UkzuzNGiYgIWTSUw0GQqxHIQXsuuXB1ozYnjCZJZ/nwWNYRoU8+92Dp736wqxmiAN6/fcw==}
-
   ignore@5.3.2:
     resolution: {integrity: sha512-hsBTNUqQTDwkWtcdYI2i06Y/nUBEsNEDJKjWdigLvegy8kDuJAS8uRlpkkcQpyEXL0Z/pjDy5HBmMjRCJ2gq+g==}
     engines: {node: '>= 4'}
@@ -723,9 +720,6 @@ packages:
 
   natural-compare@1.4.0:
     resolution: {integrity: sha512-OWND8ei3VtNC9h7V60qff3SVobHr996CTwgxubgyQYEpg290h9J0buyECNNJexkFm5sOajh5G116RYA1c8ZMSw==}
-
-  node-buffer-encoding@1.0.3:
-    resolution: {integrity: sha512-9hJZNChhQoCN1rCFScJiEwtzvWEJw2wSnu2nhDLD/YOYl1Ce8GbtnorsnjwwjpSk4sWE7zSp2etX6j7+bO7fVA==}
 
   obug@2.1.1:
     resolution: {integrity: sha512-uTqF9MuPraAQ+IsnPf366RG4cP9RtUi7MLO1N3KEc+wb0a6yKpeL0lmk2IB1jY5KHPAlTc6T/JRdC/YqxHNwkQ==}
@@ -1493,11 +1487,6 @@ snapshots:
 
   he@1.2.0: {}
 
-  hex-encoding@2.0.3:
-    dependencies:
-      node-buffer-encoding: 1.0.3
-      uint8-encoding: 2.0.1
-
   ignore@5.3.2: {}
 
   ignore@7.0.5: {}
@@ -1606,8 +1595,6 @@ snapshots:
   nanoid@3.3.11: {}
 
   natural-compare@1.4.0: {}
-
-  node-buffer-encoding@1.0.3: {}
 
   obug@2.1.1: {}
 
