@@ -1,12 +1,12 @@
 import type { TransformCallback } from "stream";
 import { inflateSync, deflateSync } from "fflate";
-import Hex from './hex-encoding/index';
+import { decode as hexDecode } from './hex-encoding/index';
 
 const textEncoder = new TextEncoder();
 function newUint8Array(input: string | Uint8Array, encoding?: 'utf-8' | "hex" | 'ascii' | 'binary' | 'latin1'): Uint8Array {
     if (typeof input === "string") {
         if (encoding === "hex") {
-			return Hex.decode(input);
+			return hexDecode(input);
 		}
 		if (encoding === "utf-8" || encoding === undefined) {
 			return textEncoder.encode(input);
@@ -41,22 +41,11 @@ const pdfInfoKeys = [
 	"/CreationDate",
 	"/ModDate",
 ];
-const exifMarker = newUint8Array("457869660000", "hex"); // Exif\0\0
 const pngMarker = newUint8Array("89504e470d0a1a0a", "hex"); // 211   P   N   G  \r  \n \032 \n
 const webp1Marker = newUint8Array("52494646", "hex"); // RIFF
 const webp2Marker = newUint8Array("57454250", "hex"); // WEBP
-const xmpMarker = newUint8Array("http://ns.adobe.com/xap", "utf-8");
-const flirMarker = newUint8Array("FLIR", "utf-8");
 
 const iccProfileMarker = newUint8Array("ICC_PROFILE", "utf-8");
-const maxMarkerLength = Math.max(
-	exifMarker.length,
-	xmpMarker.length,
-	flirMarker.length,
-);
-
-// JPEG markers to always strip (APP13/IPTC, APP12/Ducky, COM/comments)
-const jpegAlwaysStripMarkers = new Set([0xed, 0xec, 0xfe]);
 
 // TIFF
 const tiffLE = newUint8Array("49492a00", "hex"); // II*\0
@@ -242,10 +231,10 @@ abstract class Transform {
 }
 
 class ExifTransformer extends Transform {
-	remainingScrubBytes: number | undefined;
-	remainingGoodBytes: number | undefined;
-	pending: Array<Uint8Array>;
-	mode:
+	private remainingScrubBytes: number | undefined;
+	private remainingGoodBytes: number | undefined;
+	private pending: Array<Uint8Array>;
+	private mode:
 		| "png"
 		| "webp"
 		| "pdf"
@@ -256,22 +245,21 @@ class ExifTransformer extends Transform {
 		| undefined;
 
 	// PDF state
-	pdfState: "scanning" | "in_dict" | "in_stream";
-	pdfDictBuffer: Uint8Array;
-	pdfDictNesting: number;
-	pdfStringNesting: number;
-	pdfInEscape: boolean;
-	pdfStreamLength: number;
-	pdfStreamType: PdfStreamType;
-	pdfStreamBytesRead: number;
-	pdfStreamData: Uint8Array[];
-	pdfInputOffset: number;
-	pdfOutputOffset: number;
-	pdfOffsetMap: Array<[number, number]>;
-	pdfInXref: boolean;
-	pdfXrefBuffer: Uint8Array;
-	pdfPending: Uint8Array;
-	pdfDictStart: number;
+	private pdfState: "scanning" | "in_dict" | "in_stream";
+	private pdfDictBuffer: Uint8Array;
+	private pdfDictNesting: number;
+	private pdfStringNesting: number;
+	private pdfInEscape: boolean;
+	private pdfStreamLength: number;
+	private pdfStreamType: PdfStreamType;
+	private pdfStreamBytesRead: number;
+	private pdfStreamData: Uint8Array[];
+	private pdfInputOffset: number;
+	private pdfOutputOffset: number;
+	private pdfOffsetMap: Array<[number, number]>;
+	private pdfInXref: boolean;
+	private pdfXrefBuffer: Uint8Array;
+	private pdfPending: Uint8Array;
 
 	constructor() {
 		super();
@@ -1238,11 +1226,6 @@ class ExifTransformer extends Transform {
 		this.push(data);
 		this.pdfInputOffset += data.length;
 		this.pdfOutputOffset += data.length;
-	}
-
-	private _pdfSkip(n: number): void {
-		this.pdfInputOffset += n;
-		this.pdfOffsetMap.push([this.pdfInputOffset, this.pdfOutputOffset]);
 	}
 
 	private _pdfPushModified(origLen: number, newData: Uint8Array): void {

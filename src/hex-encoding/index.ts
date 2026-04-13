@@ -26,14 +26,12 @@ DEALINGS IN THE SOFTWARE.
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
 
-const U8 = {
-    encode: (data: string): Uint8Array => {
-        return encoder.encode(data);
-    },
+const U8_encode = (data: string): Uint8Array => {
+    return encoder.encode(data);
+};
 
-    decode: (data: Uint8Array): string => {
-        return decoder.decode(data);
-    },
+const U8_decode = (data: Uint8Array): string => {
+    return decoder.decode(data);
 };
 
 const DEC2HEX = (() => {
@@ -67,7 +65,7 @@ const HEX2DEC = (() => {
     return hex2dec;
 })();
 
-const is = (data: string): boolean => {
+export const is = (data: string): boolean => {
     if (data.length % 2) return false;
 
     if (!/^[a-fA-F0-9]*$/.test(data)) return false;
@@ -75,37 +73,31 @@ const is = (data: string): boolean => {
     return true;
 };
 
-const Browser = {
-    encode: (data: Uint8Array): string => {
-        let hex = "";
+export const encode = (data: Uint8Array): string => {
+    let hex = "";
 
-        for (let i = 0, l = data.length; i < l; i++) {
-            hex += DEC2HEX[data[i]];
-        }
+    for (let i = 0, l = data.length; i < l; i++) {
+        hex += DEC2HEX[data[i]];
+    }
 
-        return hex;
-    },
-
-    encodeStr: (data: string): string => {
-        return Browser.encode(U8.encode(data));
-    },
-
-    decode: (data: string): Uint8Array => {
-        const length = data.length / 2;
-        const u8 = new Uint8Array(length);
-
-        for (let i = 0; i < length; i++) {
-            u8[i] = HEX2DEC[data.slice(i * 2, i * 2 + 2)];
-        }
-
-        return u8;
-    },
-
-    decodeStr: (data: string): string => {
-        return U8.decode(Browser.decode(data));
-    },
-
-    is,
+    return hex;
 };
 
-export default Browser;
+export const encodeStr = (data: string): string => {
+    return encode(U8_encode(data));
+}
+
+export const decode = (data: string): Uint8Array => {
+    const length = data.length / 2;
+    const u8 = new Uint8Array(length);
+
+    for (let i = 0; i < length; i++) {
+        u8[i] = HEX2DEC[data.slice(i * 2, i * 2 + 2)];
+    }
+
+    return u8;
+};
+
+export const decodeStr = (data: string): string => {
+    return U8_decode(decode(data));
+};
